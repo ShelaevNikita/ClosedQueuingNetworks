@@ -77,8 +77,8 @@ class Jackson_Network_MM1():
 
     # Поиск массива W
     def findWArray(self):
-        flag = False
         for r in range(self.R):
+            flag = False
             for i in range(self.M):
                 for j in range(self.M):
                     elem = self.InputParameterDict['Q'][r][i][j]
@@ -86,11 +86,8 @@ class Jackson_Network_MM1():
                         flag = True
                         break
                 if flag:
-                    break
+                    break    
             if flag:
-                break     
-        if flag:
-            for r in range(self.R):
                 A = np.copy(np.transpose(self.InputParameterDict['Q'][r]))
                 B = np.zeros(self.M)
                 for i in range(self.M):
@@ -98,8 +95,7 @@ class Jackson_Network_MM1():
                 A[-1] = np.ones(self.M)
                 B[-1] = 1
                 self.InputParameterDict['W'].append(solve(A, B))
-        else:
-            for r in range(self.R):
+            else:
                 self.InputParameterDict['W'].append(np.ones(self.M))
         return
 

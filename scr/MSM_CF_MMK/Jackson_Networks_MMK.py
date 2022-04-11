@@ -4,7 +4,7 @@ import numpy as np
 from re import sub
 from scipy.linalg import solve
 
-FileName = './scr/MSM_MMK/InputData.dat'
+FileName = './scr/MSM_CF_MMK/InputData.dat'
 
 class Jackson_Network_MMK():
 
@@ -122,15 +122,18 @@ class Jackson_Network_MMK():
         toi = (p ** k) * P0 / (k * self.InputParameterDict['F'][k] * mui * ((1 - p / k) ** 2))
         hh = self.N / (self.N + toi * mui) * (self.N - 1) / self.N * toi
         Ji = lambdai * (hh + 1 / mui)
-        return Ji
+        return (Ji - p, Ji)
 
     # Выполнение одной итерации
     def doOneIter(self, Bi):
         lambdaArray = [Bi * elem for elem in self.InputParameterDict['W']]
         jArray = []
-        for i in range(self.M): 
-            jArray.append(self.findJi(lambdaArray[i], i))
-        return (lambdaArray, jArray)
+        n0Array = []
+        for i in range(self.M):
+            n0, Ji = self.findJi(lambdaArray[i], i)
+            jArray.append(Ji)
+            n0Array.append(n0)
+        return (lambdaArray, jArray, n0Array)
 
     # Функция метода Вегстейна
     def funWegstein(self, iter):
@@ -152,17 +155,17 @@ class Jackson_Network_MMK():
         L = 0.
         while abs(L - self.N) > self.ErrorRate:
             iter = iter + 1
-            lambdaArray, jArray = self.doOneIter(Bi)
+            lambdaArray, jArray, n0 = self.doOneIter(Bi)
             L = sum(jArray)
             Bi = Bi * self.N / L
             self.yArray.append(Bi)
             if iter > 0:
                 Bi = self.funWegstein(iter)
             self.xArray.append(Bi)
-        return (lambdaArray, jArray)
+        return (lambdaArray, jArray, n0)
 
     # Отображение полученного результата
-    def printResult(self, lambdaArray, jArray):
+    def printResult(self, lambdaArray, jArray, n0):
         if len(lambdaArray) != self.M or len(jArray) != self.M:
             print('\n   Ошибка! Некорректные входные данные!')
             return
@@ -170,6 +173,7 @@ class Jackson_Network_MMK():
         tWaiting = [t[i] - 1 / self.InputParameterDict['MU'][i] for i in range(self.M)]
         print('\n   lambda =', lambdaArray)
         print('\n   J =', jArray)
+        print('\n   n0 =', n0)
         print('\n   t =', t)
         print('\n   to =', tWaiting, '\n')
         return
@@ -177,8 +181,8 @@ class Jackson_Network_MMK():
     # Главная функция
     def main(self, inputFileName):
         self.splitInputFile(inputFileName)
-        lambdaArray, jArray = self.forIter(self.findMostLoadedNode())
-        self.printResult(lambdaArray, jArray)
+        lambdaArray, jArray, n0 = self.forIter(self.findMostLoadedNode())
+        self.printResult(lambdaArray, jArray, n0)
         return 0
 
 if __name__ == '__main__':
