@@ -4,7 +4,7 @@ import numpy as np
 from re import sub
 from scipy.linalg import solve
 
-FileName = './scr/MSM_MMK/InputData.dat'
+FileName = './src/MSM_MMK/InputData.dat'
 
 class Jackson_Network_MMK():
 
