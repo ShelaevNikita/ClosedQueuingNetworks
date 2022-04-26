@@ -4,9 +4,9 @@ import numpy as np
 from re import sub
 from scipy.linalg import solve
 
-FileName = './src/MSM_CF_MM1/InputData.dat'
+FileName = './src/MSS_D_MM1/InputData.dat'
 
-class Jackson_Network_MM1():
+class Single_M_Hetero_Closed_Nets():
 
     M = 1   # Количество узлов (приборов) в сети
     R = 1   # Количество классов заявок
@@ -16,10 +16,6 @@ class Jackson_Network_MM1():
                            'Q' : [],            # Матрица передач, определяющая маршрутизацию заявок в сети (размер - R x M x M)
                            'MU': [],            # Интенсивность обслуживания заявок в узлах сети (размер - R x M)                          
                            'W' : [] }           # Вероятность нахождения заявки в текущем узле сети (размер - R x M)
-
-    # 2 Массива для метода Вегстейна
-    xArray = []
-    yArray = []
 
     def __init__(self, inputFileName):
         self.main(inputFileName)
@@ -99,77 +95,69 @@ class Jackson_Network_MM1():
                 self.InputParameterDict['W'].append(np.ones(self.M))
         return
 
-    # Поиск наиболее загруженного узла в сети
-    def findMostLoadedNode(self):
-        self.findWArray()
-        indexMaxArray = []
+    # Поиск начального значения t
+    def findFirst_t(self, k):       
+        t = []
         for r in range(self.R):
-            max = 0.
-            indexMax = 0
+            t.append([k / self.InputParameterDict['MU'][r][i] for i in range(self.M)])
+        return t
+
+    # Поиск Q = {qiv}
+    def find_Q(self, t):
+        Q = []
+        for r in range(self.R):
+            sumW = sum([self.InputParameterDict['W'][r][i] * t[r][i] for i in range(self.M)])
+            Q.append([self.InputParameterDict['W'][r][i] * t[r][i] / sumW for i in range(self.M)])
+        return Q
+
+    # Поиск to
+    def find_t(self, lambdaArray, Q):
+        new_t = []
+        for r in range(self.R):
+            new_tr = []
             for i in range(self.M):
-                value = self.InputParameterDict['W'][r][i] / self.InputParameterDict['MU'][r][i]
-                if value > max:
-                    max = value
-                    indexMax = i
-            indexMaxArray.append(indexMax)
-        return indexMaxArray
+                t_ir = 0
+                for v in range(self.R):
+                    nv = self.InputParameterDict['N'][v]
+                    if v == r:
+                        nv -= 1
+                    t_ir += nv * Q[v][i] / self.InputParameterDict['MU'][v][i]
+                t_ir += 1 / self.InputParameterDict['MU'][r][i]
+                new_tr.append(t_ir)
+            new_t.append(new_tr)
+        return new_t
 
-    # Поиск jArray
-    def find_J(self, lambdaArray, to):
-        jArray = []
-        for i in range(self.M):       
-            jArray.append([lambdaArray[i][r] * (to[i] + 1 / self.InputParameterDict['MU'][r][i]) for r in range(self.R)])
-        return jArray
-
-    # Выполнение одной итерации
-    def doOneIter(self, Bi):
-        lambdaArrayi = []
-        for i in range(self.M):
-            lambdaArrayi.append([Bi[r] * self.InputParameterDict['W'][r][i] for r in range(self.R)])
-        lambdaArrayR = [sum(lambdaArrayi[i]) for i in range(self.M)]
-        ttR = []
-        for i in range(self.M):
-            ttR.append(sum([1 / self.InputParameterDict['MU'][r][i] * lambdaArrayi[i][r] / lambdaArrayR[i] for r in range(self.R)]))
-        N = sum(self.InputParameterDict['N'])
-        to = []
-        for i in range(self.M):
-            lambdaR = lambdaArrayR[i]
-            tti = ttR[i]
-            kk = lambdaR * (tti ** 2) / (1 - lambdaR * tti)
-            to.append(N * tti / (N * tti + kk) * kk * (N - 1) / N)  # Возможны значения <= 0
-        jArray = self.find_J(lambdaArrayi, to)
-        return (to, lambdaArrayi, jArray)
-
-    # Функция метода Вегстейна
-    def funWegstein(self, iter):
-        yk = self.yArray[iter:(iter + 2)]
-        xk = self.xArray[(iter - 1):(iter + 1)]
-        BiNew = []
+    # Сравнение 2-х t
+    def findComparison_t(self, t_last, t):
+        flag = False
         for r in range(self.R):
-            BiNew.append(yk[1][r] - ((yk[1][r] - yk[0][r]) * (yk[1][r] - xk[1][r])) / 
-                         (yk[1][r] - yk[0][r] - xk[1][r] + xk[0][r]))
-        return BiNew
+            for i in range(self.M):
+                error = abs(t_last[r][i] - t[r][i])
+                if error >= self.ErrorRate:
+                    flag = True
+                    break
+            if flag:
+                break
+        return flag
 
-    # Выполнение всех итераций
-    def forIter(self, indexMaxArray):
-        iter = -1
-        Bi = [self.InputParameterDict['MU'][r][indexMaxArray[r]] / self.InputParameterDict['W'][r][indexMaxArray[r]] * \
-            (1 - 1 / self.InputParameterDict['N'][r]) for r in range(self.R)]
-        self.xArray.append(Bi)
-        self.yArray.append(Bi)
-        errorIter = self.ErrorRate * self.R
-        L = np.zeros(self.R)
-        while sum([abs(L[r] - self.InputParameterDict['N'][r]) for r in range(self.R)]) >= errorIter:
-            iter = iter + 1
-            to, lambdaArray, jArray = self.doOneIter(Bi)
-            jArray = np.transpose(np.array(jArray))
-            L = [sum(jArray[r]) for r in range(self.R)]
-            Bi = [Bi[r] * self.InputParameterDict['N'][r] / L[r] for r in range(self.R)]
-            self.yArray.append(Bi)
-            if iter > 0:
-                Bi = self.funWegstein(iter)
-            self.xArray.append(Bi)
-        return (to, lambdaArray, jArray)
+    # Поиск Lambda
+    def find_Lambda(self, t, Q):
+        lambdaArray = []
+        for r in range(self.R):
+            lambdaArray.append([self.InputParameterDict['N'][r] * Q[r][i] / t[r][i] for i in range(self.M)])
+        return lambdaArray
+
+    # Все итерации поиска t
+    def doIter(self):
+        self.findWArray()
+        t_last =  self.findFirst_t(1)
+        t = self.findFirst_t(sum(self.InputParameterDict['N']))
+        while self.findComparison_t(t_last, t):
+             Q = self.find_Q(t)
+             lambdaArray = self.find_Lambda(t, Q)
+             t_last = t
+             t = self.find_t(lambdaArray, Q)
+        return (lambdaArray, t)
 
     # Поиск среднего времени одного цикла Viv для v-го класса заявок через i-й узел сети
     def find_V(self, lambdaArray):
@@ -178,24 +166,45 @@ class Jackson_Network_MM1():
             V.append([self.InputParameterDict['N'][r] / lambdaArray[r][i] for i in range(self.M)])
         return V
 
+    # Поиск jArray
+    def find_J(self, lambdaArray, t):
+        jArray = []
+        for r in range(self.R):
+            jArray.append([lambdaArray[r][i] * t[r][i] for i in range(self.M)])
+        return jArray
+
+    # Поиск tor
+    def find_tor(self, t):
+        tor = []
+        for r in range(self.R):
+            tor.append([t[r][i] - 1 / self.InputParameterDict['MU'][r][i] for i in range(self.M)])
+        return tor
+
+    # Поиск no
+    def find_no(self, jArray, t, tor):
+        no = []
+        for i in range(self.M):
+            no.append(sum([jArray[r][i] * tor[r][i] / t[r][i] for r in range(self.R)]))
+        return no
+
+    # Функция для расчёта суммы по всем классам заявок
+    def find_result(self, array):
+        result = []
+        for i in range(self.M):
+            result.append(sum([array[r][i] for r in range(self.R)]))
+        return result
+
+    # Функция для расчёта средневзвешенного по всем классам заявок
+    def find_resultiv(self, multiv, firstiv, secondi):
+        result = []
+        for i in range(self.M):
+            result.append(sum([multiv[r][i] * firstiv[r][i] / secondi[i] for r in range(self.R)]))
+        return result
+
     # Поиск пропускной способности сети fi
     def find_fi(self, V):
         fi = [1 / V[r][1] for r in range(self.R)]
         return fi
-
-    # Поиск no
-    def find_no(self, jArray, t, to):
-        no = []
-        for i in range(self.M):
-            no.append(sum([jArray[r][i] * to[i] / t[r][i] for r in range(self.R)]))
-        return no
-
-    # Поиск t
-    def find_t(self, jArray, lambdaArray):
-        t = []
-        for r in range(self.R):
-            t.append([jArray[r][i] / lambdaArray[r][i] for i in range(self.M)])
-        return t
 
     # Отображение полученного результата
     def printResult(self, lambdaArray, jArray, t, V, no, to, fi):
@@ -209,12 +218,13 @@ class Jackson_Network_MM1():
         return
 
     # Вычисление других характеристик сети
-    def find_All(self, to, lambdaArray, jArray):
-        if len(lambdaArray) != self.R or len(jArray) != self.R:
-            print('\n   Ошибка! Некорректные входные данные!')
-            return
-        t = self.find_t(jArray, lambdaArray)
-        no = self.find_no(jArray, t, to)
+    def find_All(self, lambdaArray, t):
+        tor = self.find_tor(t)
+        jArray = self.find_J(lambdaArray, t)
+        ni = self.find_result(jArray)
+        no = self.find_no(jArray, t, tor)
+        lambda1 = self.find_result(lambdaArray)
+        to = self.find_resultiv(tor, jArray, ni)
         V = self.find_V(lambdaArray)
         fi = self.find_fi(V)
         self.printResult(lambdaArray, jArray, t, V, no, to, fi)
@@ -222,10 +232,10 @@ class Jackson_Network_MM1():
 
     # Главная функция
     def main(self, inputFileName):
-        self.splitInputFile(inputFileName)
-        to, lambdaArray, jArray = self.forIter(self.findMostLoadedNode())
-        self.find_All(to, np.transpose(lambdaArray), jArray)
+        self.splitInputFile(inputFileName)        
+        lambdaArray, t = self.doIter()
+        self.find_All(lambdaArray, t)
         return 0
 
 if __name__ == '__main__':
-    Jackson_Network_MM1(FileName)
+    Single_M_Hetero_Closed_Nets(FileName)

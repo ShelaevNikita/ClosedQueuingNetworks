@@ -4,7 +4,7 @@ import numpy as np
 from re import sub
 from scipy.linalg import solve
 
-FileName = './src/MSM_CF_MM1/InputData.dat'
+FileName = './src/MSM_MM1/InputData.dat'
 
 class Jackson_Network_MM1():
 
@@ -130,13 +130,9 @@ class Jackson_Network_MM1():
         ttR = []
         for i in range(self.M):
             ttR.append(sum([1 / self.InputParameterDict['MU'][r][i] * lambdaArrayi[i][r] / lambdaArrayR[i] for r in range(self.R)]))
-        N = sum(self.InputParameterDict['N'])
         to = []
         for i in range(self.M):
-            lambdaR = lambdaArrayR[i]
-            tti = ttR[i]
-            kk = lambdaR * (tti ** 2) / (1 - lambdaR * tti)
-            to.append(N * tti / (N * tti + kk) * kk * (N - 1) / N)  # Возможны значения <= 0
+            to.append(lambdaArrayR[i] * (ttR[i] ** 2) / (1. - lambdaArrayR[i] * ttR[i])) # Возможны значения <= 0
         jArray = self.find_J(lambdaArrayi, to)
         return (to, lambdaArrayi, jArray)
 
