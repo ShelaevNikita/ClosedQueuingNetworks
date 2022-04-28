@@ -132,7 +132,7 @@ class Jackson_Network_MM1():
             ttR.append(sum([1 / self.InputParameterDict['MU'][r][i] * lambdaArrayi[i][r] / lambdaArrayR[i] for r in range(self.R)]))
         to = []
         for i in range(self.M):
-            to.append(lambdaArrayR[i] * (ttR[i] ** 2) / (1. - lambdaArrayR[i] * ttR[i])) # Возможны значения <= 0
+            to.append(lambdaArrayR[i] * (ttR[i] ** 2) / (1 - lambdaArrayR[i] * ttR[i])) # Возможны значения <= 0
         jArray = self.find_J(lambdaArrayi, to)
         return (to, lambdaArrayi, jArray)
 
