@@ -4,18 +4,18 @@ import numpy as np
 from re import sub
 from scipy.linalg import solve
 
-FileName = './src/MSM_MM1/InputData.dat'
+FileName = './src/MSM_CF_MM1/InputData.dat'
 
-class Jackson_Network_MM1():
+class MSM_CF_MM1():
 
-    M = 1   # Количество узлов (приборов) в сети
-    R = 1   # Количество классов заявок
+    M = 1            # Количество узлов (приборов) в сети
+    R = 1            # Количество классов заявок
     ErrorRate = 0.1  # Погрешность выполнения программы
 
-    InputParameterDict = { 'N' : np.empty(1),   # Количество заявок определённого класса (размер - 1 x R)
-                           'Q' : [],            # Матрица передач, определяющая маршрутизацию заявок в сети (размер - R x M x M)
-                           'MU': [],            # Интенсивность обслуживания заявок в узлах сети (размер - R x M)                          
-                           'W' : [] }           # Вероятность нахождения заявки в текущем узле сети (размер - R x M)
+    InputParameterDict = { 'N' : np.empty(1), # Количество заявок определённого класса (размер - R)
+                           'Q' : [],          # Матрица передач, определяющая маршрутизацию заявок в сети (размер - R x M x M)
+                           'MU': [],          # Интенсивность обслуживания заявок в узлах сети (размер - R x M)                          
+                           'W' : [] }         # Вероятность нахождения заявки в текущем узле сети (размер - R x M)
 
     # 2 Массива для метода Вегстейна
     xArray = []
@@ -26,7 +26,7 @@ class Jackson_Network_MM1():
 
     # Получение из входного файла значений параметров сети
     def getInputParameter(self, inputFile):
-        flagQ = False
+        flagQ  = False
         flagMU = False
         for line in inputFile:
             lineParamIndex = line.find('=')
@@ -48,19 +48,18 @@ class Jackson_Network_MM1():
                     elif paramName == 'E':
                         self.ErrorRate = float(paramArray[0])
                     elif paramName == 'N':
-                        self.InputParameterDict[paramName] = np.array(list(map(int, paramArray)))
+                        self.InputParameterDict['N'] = np.array(list(map(int, paramArray)))
                     elif flagMU == True:
-                        self.InputParameterDict['MU'] = self.InputParameterDict['MU'] + list(map(float, paramArray))
-                        if len(self.InputParameterDict['MU']) == self.M * self.R:
+                        self.InputParameterDict['MU'].append(list(map(float, paramArray)))
+                        if len(self.InputParameterDict['MU']) == self.R:
                             flagMU = False
                     elif flagQ == True:
-                        self.InputParameterDict['Q'] = self.InputParameterDict['Q'] + list(map(float, paramArray))
-                        if len(self.InputParameterDict['Q']) == (self.M ** 2) * self.R:
+                        self.InputParameterDict['Q'].append(list(map(float, paramArray)))
+                        if len(self.InputParameterDict['Q']) == self.M * self.R:
                             flagQ = False
                 except TypeError:
                     print(f'\n   Error! TypeError with parameter "{paramName}"...')
                     continue
-        self.InputParameterDict['MU'] = np.array(self.InputParameterDict['MU']).reshape(self.R, self.M)
         self.InputParameterDict['Q'] = np.array(self.InputParameterDict['Q']).reshape(self.R, self.M, self.M)
         return
 
@@ -79,13 +78,9 @@ class Jackson_Network_MM1():
     def findWArray(self):
         for r in range(self.R):
             flag = False
-            for i in range(self.M):
-                for j in range(self.M):
-                    elem = self.InputParameterDict['Q'][r][i][j]
-                    if elem != 1 and elem != 0:
-                        flag = True
-                        break
-                if flag:
+            for elem in self.InputParameterDict['Q'][r]:
+                if not 1. in elem:
+                    flag = True
                     break    
             if flag:
                 A = np.copy(np.transpose(self.InputParameterDict['Q'][r]))
@@ -130,9 +125,13 @@ class Jackson_Network_MM1():
         ttR = []
         for i in range(self.M):
             ttR.append(sum([1 / self.InputParameterDict['MU'][r][i] * lambdaArrayi[i][r] / lambdaArrayR[i] for r in range(self.R)]))
+        N = sum(self.InputParameterDict['N'])
         to = []
         for i in range(self.M):
-            to.append(lambdaArrayR[i] * (ttR[i] ** 2) / (1 - lambdaArrayR[i] * ttR[i])) # Возможны значения <= 0
+            lambdaR = lambdaArrayR[i]
+            tti = ttR[i]
+            kk = lambdaR * (tti ** 2) / (1 - lambdaR * tti)
+            to.append(N * tti / (N * tti + kk) * kk * (N - 1) / N)
         jArray = self.find_J(lambdaArrayi, to)
         return (to, lambdaArrayi, jArray)
 
@@ -176,7 +175,7 @@ class Jackson_Network_MM1():
 
     # Поиск пропускной способности сети fi
     def find_fi(self, V):
-        fi = [1 / V[r][1] for r in range(self.R)]
+        fi = [self.M / sum(V[r]) for r in range(self.R)]
         return fi
 
     # Поиск no
@@ -224,4 +223,4 @@ class Jackson_Network_MM1():
         return 0
 
 if __name__ == '__main__':
-    Jackson_Network_MM1(FileName)
+    MSM_CF_MM1(FileName)

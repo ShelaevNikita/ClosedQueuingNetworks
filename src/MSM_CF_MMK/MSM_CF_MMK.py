@@ -4,18 +4,20 @@ import numpy as np
 from re import sub
 from scipy.linalg import solve
 
-FileName = './src/MSS_CF_MM1/InputData.dat'
+FileName = './src/MSM_CF_MMK/InputData.dat'
 
-class Jackson_Network_MM1():
+class MSM_CF_MMK():
 
-    M = 1   # Количество узлов (приборов) в сети
-    N = 1   # Количество заявок в сети
+    M = 1            # Количество узлов (приборов) в сети
+    N = 1            # Количество заявок в сети
     ErrorRate = 0.1  # Погрешность выполнения программы
 
-    InputParameterDict = { 'Q' : [],              # Матрица передач, определяющая маршрутизацию заявок в сети (размер - M x M)
-                           'MU': np.empty(1),     # Интенсивность обслуживания заявок в узлах сети (размер - M)                          
-                           'W' : np.empty(1) }    # Вероятность нахождения заявки в текущем узле сети (размер - M)
-
+    InputParameterDict = { 'Q' : [],            # Матрица передач, определяющая маршрутизацию заявок в сети (размер - M x M)
+                           'K' : np.empty(1),   # Число каналов обслуживания в узлах сети (размер - M)
+                           'MU': np.empty(1),   # Интенсивность обслуживания заявок в узлах сети (размер - M)                          
+                           'W' : np.empty(1),   # Вероятность нахождения заявки в текущем узле сети (размер - M)
+                           'F' : np.empty(1) }  # Массив значений факториалов (размер - M)
+    
     # 2 Массива для метода Вегстейна
     xArray = []
     yArray = []
@@ -43,16 +45,17 @@ class Jackson_Network_MM1():
                         self.N = int(paramArray[0])
                     elif paramName == 'E':
                         self.ErrorRate = float(paramArray[0])
+                    elif paramName == 'K':
+                        self.InputParameterDict['K']  = np.array(list(map(int, paramArray)))
                     elif paramName == 'MU':
-                        self.InputParameterDict[paramName] = np.array(list(map(float, paramArray)))
+                        self.InputParameterDict['MU'] = np.array(list(map(float, paramArray)))
                     elif flagQ == True:
-                        self.InputParameterDict['Q'] = self.InputParameterDict['Q'] + list(map(float, paramArray))
-                        if len(self.InputParameterDict['Q']) == self.M ** 2:
+                        self.InputParameterDict['Q'].append(list(map(float, paramArray)))
+                        if len(self.InputParameterDict['Q']) == self.M:
                             flagQ = False
                 except TypeError:
                     print(f'\n   Error! TypeError with parameter "{paramName}"...')
                     continue
-        self.InputParameterDict['Q'] = np.array(self.InputParameterDict['Q']).reshape(self.M, self.M)
         return
 
     # Открытие файла с заданными параметрами сети
@@ -69,15 +72,11 @@ class Jackson_Network_MM1():
     # Поиск массива W
     def findWArray(self):
         flag = False
-        for i in range(self.M):
-            for j in range(self.M):
-                elem = self.InputParameterDict['Q'][i][j]
-                if elem != 1 and elem != 0:
-                    flag = True
-                    break
-            if flag:
-                break     
-        if flag:
+        for elem in self.InputParameterDict['Q']:
+            if not 1. in elem:
+                flag = True
+                break
+        if flag:          
             A = np.copy(np.transpose(self.InputParameterDict['Q']))
             B = np.zeros(self.M)
             for i in range(self.M):
@@ -95,23 +94,34 @@ class Jackson_Network_MM1():
         max = 0.
         indexMax = 0
         for i in range(self.M):
-            value = self.InputParameterDict['W'][i] / self.InputParameterDict['MU'][i]
+            value = self.InputParameterDict['W'][i] / (self.InputParameterDict['MU'][i] * self.InputParameterDict['K'][i])
             if value > max:
                 max = value
                 indexMax = i
         return indexMax
 
+    # Поиск Ji
+    def findJi(self, lambdai, i):
+        mui = self.InputParameterDict['MU'][i]
+        k = self.InputParameterDict['K'][i]
+        p = lambdai / mui
+        sumH = sum([(p ** j) * 1 / self.InputParameterDict['F'][j] for j in range(1, (k + 1))])
+        P0 = 1 / (1 + sumH + (p ** (k + 1)) / (self.InputParameterDict['F'][k] * (k - p)))
+        toi = (p ** k) * P0 / (k * self.InputParameterDict['F'][k] * mui * ((1 - p / k) ** 2))
+        hh = self.N / (self.N + toi * mui) * (self.N - 1) / self.N * toi
+        ni = lambdai * (hh + 1 / mui)
+        return (ni - p, ni)
+
     # Выполнение одной итерации
     def doOneIter(self, Bi):
         lambdaArray = [Bi * elem for elem in self.InputParameterDict['W']]
         jArray = []
+        noArray = []
         for i in range(self.M):
-            lambdai = lambdaArray[i]
-            mui = self.InputParameterDict['MU'][i]
-            kk = lambdai / (mui - lambdai)
-            hh = self.N / (self.N + kk) * kk / mui * (self.N - 1) / self.N
-            jArray.append(lambdai * (hh + 1 / mui))
-        return (lambdaArray, jArray)
+            no, ni = self.findJi(lambdaArray[i], i)
+            jArray.append(ni)
+            noArray.append(no)
+        return (lambdaArray, jArray, noArray)
 
     # Функция метода Вегстейна
     def funWegstein(self, iter):
@@ -123,40 +133,52 @@ class Jackson_Network_MM1():
     # Выполнение всех итераций
     def forIter(self, indexMax):
         iter = -1
-        Bi = self.InputParameterDict['MU'][indexMax] / self.InputParameterDict['W'][indexMax] * (1 - 1 / self.N)
+        self.InputParameterDict['F'] = [np.math.factorial(j) for j in range(max(self.InputParameterDict['K']) + 1)]
+        Bi = (self.InputParameterDict['K'][indexMax] * (1 - 1 / self.N) * \
+            self.InputParameterDict['MU'][indexMax]) / self.InputParameterDict['W'][indexMax]
         self.xArray.append(Bi)
         self.yArray.append(Bi)
         L = 0.
         while abs(L - self.N) > self.ErrorRate:
             iter = iter + 1
-            lambdaArray, jArray = self.doOneIter(Bi)
+            lambdaArray, jArray, no = self.doOneIter(Bi)
             L = sum(jArray)
             Bi = Bi * self.N / L
             self.yArray.append(Bi)
             if iter > 0:
                 Bi = self.funWegstein(iter)
             self.xArray.append(Bi)
-        return (lambdaArray, jArray)
+        return (lambdaArray, jArray, no)
 
     # Отображение полученного результата
-    def printResult(self, lambdaArray, jArray):
+    def printResult(self, lambdaArray, jArray, t, V, no, to, fi):
+        print('\n   lambda =', lambdaArray)
+        print('\n   n =', jArray)
+        print('\n   t =', t)
+        print('\n   V =', V)
+        print('\n   no =', no)
+        print('\n   to =', to)
+        print('\n   fi =', fi, '\n')
+        return
+
+    # Вычисление других характеристик сети
+    def find_All(self, lambdaArray, jArray, no):
         if len(lambdaArray) != self.M or len(jArray) != self.M:
             print('\n   Ошибка! Некорректные входные данные!')
             return
         t = [jArray[i] / lambdaArray[i] for i in range(self.M)]
-        tWaiting = [t[i] - 1 / self.InputParameterDict['MU'][i] for i in range(self.M)]
-        print('\n   lambda =', lambdaArray)
-        print('\n   J =', jArray)
-        print('\n   t =', t)
-        print('\n   to =', tWaiting, '\n')
+        to = [t[i] - 1 / self.InputParameterDict['MU'][i] for i in range(self.M)]
+        V = [self.N / lambdaArray[i] for i in range(self.M)]
+        fi = self.M / sum(V)
+        self.printResult(lambdaArray, jArray, t, V, no, to, fi)
         return
 
     # Главная функция
     def main(self, inputFileName):
         self.splitInputFile(inputFileName)
-        lambdaArray, jArray = self.forIter(self.findMostLoadedNode())
-        self.printResult(lambdaArray, jArray)
+        lambdaArray, jArray, no = self.forIter(self.findMostLoadedNode())
+        self.find_All(lambdaArray, jArray, no)
         return 0
 
 if __name__ == '__main__':
-    Jackson_Network_MM1(FileName)
+    MSM_CF_MMK(FileName)

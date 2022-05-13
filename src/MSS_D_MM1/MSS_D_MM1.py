@@ -6,13 +6,13 @@ from scipy.linalg import solve
 
 FileName = './src/MSS_D_MM1/InputData.dat'
 
-class Single_M_Hetero_Closed_Nets():
+class MSS_D_MM1():
 
     M = 1            # Количество узлов (приборов) в сети
     R = 1            # Количество классов заявок
     ErrorRate = 0.1  # Погрешность выполнения программы
 
-    InputParameterDict = { 'N' : np.empty(1),   # Количество заявок определённого класса (размер - 1 x R)
+    InputParameterDict = { 'N' : np.empty(1),   # Количество заявок определённого класса (размер - R)
                            'Q' : [],            # Матрица передач, определяющая маршрутизацию заявок в сети (размер - R x M x M)
                            'MU': [],            # Интенсивность обслуживания заявок в узлах сети (размер - R x M)                          
                            'W' : [] }           # Вероятность нахождения заявки в текущем узле сети (размер - R x M)
@@ -22,7 +22,7 @@ class Single_M_Hetero_Closed_Nets():
 
     # Получение из входного файла значений параметров сети
     def getInputParameter(self, inputFile):
-        flagQ = False
+        flagQ  = False
         flagMU = False
         for line in inputFile:
             lineParamIndex = line.find('=')
@@ -44,19 +44,18 @@ class Single_M_Hetero_Closed_Nets():
                     elif paramName == 'E':
                         self.ErrorRate = float(paramArray[0])
                     elif paramName == 'N':
-                        self.InputParameterDict[paramName] = np.array(list(map(int, paramArray)))
+                        self.InputParameterDict['N'] = np.array(list(map(int, paramArray)))
                     elif flagMU == True:
-                        self.InputParameterDict['MU'] = self.InputParameterDict['MU'] + list(map(float, paramArray))
-                        if len(self.InputParameterDict['MU']) == self.M * self.R:
+                        self.InputParameterDict['MU'].append(list(map(float, paramArray)))
+                        if len(self.InputParameterDict['MU']) == self.R:
                             flagMU = False
                     elif flagQ == True:
-                        self.InputParameterDict['Q'] = self.InputParameterDict['Q'] + list(map(float, paramArray))
-                        if len(self.InputParameterDict['Q']) == (self.M ** 2) * self.R:
+                        self.InputParameterDict['Q'].append(list(map(float, paramArray)))
+                        if len(self.InputParameterDict['Q']) == self.M * self.R:
                             flagQ = False
                 except TypeError:
                     print(f'\n   Error! TypeError with parameter "{paramName}"...')
                     continue
-        self.InputParameterDict['MU'] = np.array(self.InputParameterDict['MU']).reshape(self.R, self.M)
         self.InputParameterDict['Q'] = np.array(self.InputParameterDict['Q']).reshape(self.R, self.M, self.M)
         return
 
@@ -75,13 +74,9 @@ class Single_M_Hetero_Closed_Nets():
     def findWArray(self):
         for r in range(self.R):
             flag = False
-            for i in range(self.M):
-                for j in range(self.M):
-                    elem = self.InputParameterDict['Q'][r][i][j]
-                    if elem != 1 and elem != 0:
-                        flag = True
-                        break
-                if flag:
+            for elem in self.InputParameterDict['Q'][r]:
+                if not 1. in elem:
+                    flag = True
                     break    
             if flag:
                 A = np.copy(np.transpose(self.InputParameterDict['Q'][r]))
@@ -203,7 +198,7 @@ class Single_M_Hetero_Closed_Nets():
 
     # Поиск пропускной способности сети fi
     def find_fi(self, V):
-        fi = [1 / V[r][1] for r in range(self.R)]
+        fi = [self.M / sum(V[r]) for r in range(self.R)]
         return fi
 
     # Отображение полученного результата
@@ -238,4 +233,4 @@ class Single_M_Hetero_Closed_Nets():
         return 0
 
 if __name__ == '__main__':
-    Single_M_Hetero_Closed_Nets(FileName)
+    MSS_D_MM1(FileName)

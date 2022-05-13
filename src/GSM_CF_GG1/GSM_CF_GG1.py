@@ -4,18 +4,19 @@ import numpy as np
 from re import sub
 from scipy.linalg import solve
 
-FileName = './src/MSM_CF_MM1/InputData.dat'
+FileName = './src/GSM_CF_GG1/InputData.dat'
 
-class Jackson_Network_MM1():
+class GSM_CF_GG1():
 
-    M = 1   # Количество узлов (приборов) в сети
-    R = 1   # Количество классов заявок
+    M = 1            # Количество узлов (приборов) в сети
+    R = 1            # Количество классов заявок
     ErrorRate = 0.1  # Погрешность выполнения программы
 
-    InputParameterDict = { 'N' : np.empty(1),   # Количество заявок определённого класса (размер - 1 x R)
-                           'Q' : [],            # Матрица передач, определяющая маршрутизацию заявок в сети (размер - R x M x M)
-                           'MU': [],            # Интенсивность обслуживания заявок в узлах сети (размер - R x M)                          
-                           'W' : [] }           # Вероятность нахождения заявки в текущем узле сети (размер - R x M)
+    InputParameterDict = { 'N' : np.empty(1), # Количество заявок определённого класса (размер - R)
+                           'Q' : [],          # Матрица передач, определяющая маршрутизацию заявок в сети (размер - R x M x M)
+                           'MU': [],          # Интенсивность обслуживания заявок в узлах сети (размер - R x M)                          
+                           'CS': [],          # Квадраты коэффициентов вариации длительностей обслуживания заявок в узлах сети (размер - R x M)
+                           'W' : [] }         # Вероятность нахождения заявки в текущем узле сети (размер - R x M)
 
     # 2 Массива для метода Вегстейна
     xArray = []
@@ -23,15 +24,16 @@ class Jackson_Network_MM1():
 
     def __init__(self, inputFileName):
         self.main(inputFileName)
-
+    
     # Получение из входного файла значений параметров сети
     def getInputParameter(self, inputFile):
-        flagQ = False
+        flagQ  = False
         flagMU = False
+        flagCS = False
         for line in inputFile:
             lineParamIndex = line.find('=')
-            if lineParamIndex > -1 or flagQ == True or flagMU == True:
-                if flagQ or flagMU:
+            if lineParamIndex > -1 or flagQ == True or flagMU == True or flagCS == True:
+                if flagQ or flagMU or flagCS:
                     lineParamIndex = 0
                 lineParam  = sub('[^0-9\.]', ' ', line[lineParamIndex:])
                 paramArray = sub(r'\s+', ' ', lineParam.strip()).split()
@@ -40,6 +42,8 @@ class Jackson_Network_MM1():
                     flagQ = True
                 elif paramName == 'MU':
                     flagMU = True
+                elif paramName == 'CS':
+                    flagCS = True
                 try:
                     if   paramName == 'M':
                         self.M = int(paramArray[0])
@@ -48,19 +52,22 @@ class Jackson_Network_MM1():
                     elif paramName == 'E':
                         self.ErrorRate = float(paramArray[0])
                     elif paramName == 'N':
-                        self.InputParameterDict[paramName] = np.array(list(map(int, paramArray)))
+                        self.InputParameterDict['N'] = np.array(list(map(int, paramArray)))
+                    elif flagCS == True:
+                        self.InputParameterDict['CS'].append(list(map(float, paramArray)))
+                        if len(self.InputParameterDict['CS']) == self.R:
+                            flagCS = False
                     elif flagMU == True:
-                        self.InputParameterDict['MU'] = self.InputParameterDict['MU'] + list(map(float, paramArray))
-                        if len(self.InputParameterDict['MU']) == self.M * self.R:
+                        self.InputParameterDict['MU'].append(list(map(float, paramArray)))
+                        if len(self.InputParameterDict['MU']) == self.R:
                             flagMU = False
                     elif flagQ == True:
-                        self.InputParameterDict['Q'] = self.InputParameterDict['Q'] + list(map(float, paramArray))
-                        if len(self.InputParameterDict['Q']) == (self.M ** 2) * self.R:
+                        self.InputParameterDict['Q'].append(list(map(float, paramArray)))
+                        if len(self.InputParameterDict['Q']) == self.M * self.R:
                             flagQ = False
                 except TypeError:
                     print(f'\n   Error! TypeError with parameter "{paramName}"...')
                     continue
-        self.InputParameterDict['MU'] = np.array(self.InputParameterDict['MU']).reshape(self.R, self.M)
         self.InputParameterDict['Q'] = np.array(self.InputParameterDict['Q']).reshape(self.R, self.M, self.M)
         return
 
@@ -79,13 +86,9 @@ class Jackson_Network_MM1():
     def findWArray(self):
         for r in range(self.R):
             flag = False
-            for i in range(self.M):
-                for j in range(self.M):
-                    elem = self.InputParameterDict['Q'][r][i][j]
-                    if elem != 1 and elem != 0:
-                        flag = True
-                        break
-                if flag:
+            for elem in self.InputParameterDict['Q'][r]:
+                if not 1. in elem:
+                    flag = True
                     break    
             if flag:
                 A = np.copy(np.transpose(self.InputParameterDict['Q'][r]))
@@ -114,11 +117,89 @@ class Jackson_Network_MM1():
             indexMaxArray.append(indexMax)
         return indexMaxArray
 
+    # Поиск lambdaArrij
+    def find_lambdaArrij(self, lambdaArrayi):
+        lambdaArrij = []
+        for r in range(self.R):
+            newArrij = []
+            for i in range(self.M):
+                newArrij.append([lambdaArrayi[i][r] * self.InputParameterDict['Q'][r][i][j] for j in range(self.M)])
+            lambdaArrij.append(newArrij)
+        return lambdaArrij
+
+    # Поиск Q
+    def find_Q(self, lambdaArrij, lambdaArrayR):
+        lambdaArrRij = lambdaArrij[0]
+        for r in range(1, self.R):
+            for i in range(self.M):
+                for j in range(self.M):
+                    lambdaArrRij[i][j] += lambdaArrij[r][i][j]
+        Q = []
+        for i in range(self.M):
+            Q.append([lambdaArrRij[i][j] / lambdaArrayR[i] for j in range(self.M)])
+        return Q
+
+    # Расчёт матрицы A
+    def solve_A(self, Wi, lambdaQ, lambdaArrayR, Q, Pi):
+        A = []
+        for i in range(self.M):
+            A.append([Wi[i] * lambdaQ[j][i] / lambdaArrayR[i] * Q[j][i] * (1 - Pi[j] ** 2) for j in range(self.M)])
+            A[i][i] -= 1
+        return A
+
+    # Расчёт матрицы B
+    def solve_B(self, Wi, lambdaQ, lambdaArrayR, Q, Pi, CS):
+        B = []
+        for i in range(self.M):
+            B.append(-1 + Wi[i] - Wi[i] * sum([lambdaQ[j][i] / lambdaArrayR[i] * \
+                (Q[j][i] * (Pi[j] ** 2) * CS[j] + 1 - Q[j][i]) for j in range(self.M)]))
+        return B
+
+    # Поиск CAi
+    def find_CAi(self, Q, MU, lambdaArrayi, lambdaArrayR):
+        lambdaQ = []
+        for i in range(self.M):
+            lambdaQ.append([lambdaArrayR[i] * Q[i][j] for j in range(self.M)])
+        CS = []
+        for i in range(self.M):
+            CS.append(sum([lambdaArrayi[i][r] / lambdaArrayR[i] * (self.InputParameterDict['CS'][r][i] + 1) * \
+                ((MU[i] / self.InputParameterDict['MU'][r][i]) ** 2) for r in range(self.R)]) - 1)
+        Pi = [lambdaArrayR[i] / MU[i] for i in range(self.M)]
+        Vi = []
+        for i in range(self.M):
+            Vi.append(1 / sum([Q[j][i] / (lambdaArrayR[j] ** 2) for j in range(self.M)]))
+        Wi = [1 / (1 + 4 * ((1 - Pi[i]) ** 2) * (Vi[i] - 1)) for i in range(self.M)]
+        A = self.solve_A(Wi, lambdaQ, lambdaArrayR, Q, Pi)
+        B = self.solve_B(Wi, lambdaQ, lambdaArrayR, Q, Pi, CS)       
+        CAi = solve(A, B)
+        return (Pi, CS, CAi)
+
+    # Поиск to без корректирующего фактора (toWF)
+    def find_toWF(self, Pi, CSi, CAi, MU):
+        toWF = []
+        for i in range(self.M):
+            P = Pi[i]
+            CA = CAi[i]
+            elem = P * (CSi[i] + CA) / (2 * MU[i] * (1 - P))
+            if CA < 1 - self.ErrorRate:
+                elem *= np.exp((P - 1) * ((1 - CA) ** 2) / (1.5 * P * (CSi[i] + CA)))
+            elif CA > 1 + self.ErrorRate:
+                elem *= np.exp((P - 1) * (CA - 1) / (4 * CSi[i] + CA))
+            toWF.append(elem)
+        return toWF
+
+    # Поиск t
+    def find_t(self, to):
+        t = []
+        for i in range(self.M):
+            t.append([to[i] + 1 / self.InputParameterDict['MU'][r][i] for r in range(self.R)])
+        return t
+
     # Поиск jArray
-    def find_J(self, lambdaArray, to):
+    def find_J(self, lambdaArrayi, t):
         jArray = []
         for i in range(self.M):       
-            jArray.append([lambdaArray[i][r] * (to[i] + 1 / self.InputParameterDict['MU'][r][i]) for r in range(self.R)])
+            jArray.append([t[i][r] * lambdaArrayi[i][r] for r in range(self.R)])
         return jArray
 
     # Выполнение одной итерации
@@ -127,18 +208,19 @@ class Jackson_Network_MM1():
         for i in range(self.M):
             lambdaArrayi.append([Bi[r] * self.InputParameterDict['W'][r][i] for r in range(self.R)])
         lambdaArrayR = [sum(lambdaArrayi[i]) for i in range(self.M)]
+        lambdaArrij = self.find_lambdaArrij(lambdaArrayi)
+        Q = self.find_Q(lambdaArrij, lambdaArrayR)
         ttR = []
         for i in range(self.M):
             ttR.append(sum([1 / self.InputParameterDict['MU'][r][i] * lambdaArrayi[i][r] / lambdaArrayR[i] for r in range(self.R)]))
+        MU = [1 / ttR[i] for i in range(self.M)]
+        Pi, CSi, CAi = self.find_CAi(Q, MU, lambdaArrayi, lambdaArrayR)
+        toWF = self.find_toWF(Pi, CSi, CAi, MU)
         N = sum(self.InputParameterDict['N'])
-        to = []
-        for i in range(self.M):
-            lambdaR = lambdaArrayR[i]
-            tti = ttR[i]
-            kk = lambdaR * (tti ** 2) / (1 - lambdaR * tti)
-            to.append(N * tti / (N * tti + kk) * kk * (N - 1) / N)  # Возможны значения <= 0
-        jArray = self.find_J(lambdaArrayi, to)
-        return (to, lambdaArrayi, jArray)
+        to = [toWF[i] * (N - 1) / (N + toWF[i] * MU[i]) for i in range(self.M)]
+        t = self.find_t(to)
+        jArray = self.find_J(lambdaArrayi, t)
+        return (lambdaArrayi, jArray, t, to, MU, Q, CSi)
 
     # Функция метода Вегстейна
     def funWegstein(self, iter):
@@ -161,7 +243,7 @@ class Jackson_Network_MM1():
         L = np.zeros(self.R)
         while sum([abs(L[r] - self.InputParameterDict['N'][r]) for r in range(self.R)]) >= errorIter:
             iter = iter + 1
-            to, lambdaArray, jArray = self.doOneIter(Bi)
+            lambdaArrayi, jArray, t, to, MU, Q, CSi = self.doOneIter(Bi)
             jArray = np.transpose(np.array(jArray))
             L = [sum(jArray[r]) for r in range(self.R)]
             Bi = [Bi[r] * self.InputParameterDict['N'][r] / L[r] for r in range(self.R)]
@@ -169,7 +251,7 @@ class Jackson_Network_MM1():
             if iter > 0:
                 Bi = self.funWegstein(iter)
             self.xArray.append(Bi)
-        return (to, lambdaArray, jArray)
+        return (lambdaArrayi, jArray, t, to, MU, Q, CSi)
 
     # Поиск среднего времени одного цикла Viv для v-го класса заявок через i-й узел сети
     def find_V(self, lambdaArray):
@@ -180,7 +262,7 @@ class Jackson_Network_MM1():
 
     # Поиск пропускной способности сети fi
     def find_fi(self, V):
-        fi = [1 / V[r][1] for r in range(self.R)]
+        fi = [self.M / sum(V[r]) for r in range(self.R)]
         return fi
 
     # Поиск no
@@ -190,16 +272,12 @@ class Jackson_Network_MM1():
             no.append(sum([jArray[r][i] * to[i] / t[r][i] for r in range(self.R)]))
         return no
 
-    # Поиск t
-    def find_t(self, jArray, lambdaArray):
-        t = []
-        for r in range(self.R):
-            t.append([jArray[r][i] / lambdaArray[r][i] for i in range(self.M)])
-        return t
-
     # Отображение полученного результата
-    def printResult(self, lambdaArray, jArray, t, V, no, to, fi):
+    def printResult(self, lambdaArray, jArray, t, V, no, to, MU, Q, CSi, fi):
         print('\n   lambda =', lambdaArray)
+        print('\n   MUa =', MU)
+        print('\n   Qa =', Q)
+        print('\n   CSa =', CSi)
         print('\n   n =', jArray)
         print('\n   t =', t)
         print('\n   V =', V)
@@ -209,23 +287,23 @@ class Jackson_Network_MM1():
         return
 
     # Вычисление других характеристик сети
-    def find_All(self, to, lambdaArray, jArray):
+    def find_All(self, lambdaArray, jArray, t, to, MU, Q, CSi):
         if len(lambdaArray) != self.R or len(jArray) != self.R:
             print('\n   Ошибка! Некорректные входные данные!')
             return
-        t = self.find_t(jArray, lambdaArray)
         no = self.find_no(jArray, t, to)
         V = self.find_V(lambdaArray)
         fi = self.find_fi(V)
-        self.printResult(lambdaArray, jArray, t, V, no, to, fi)
+        self.printResult(lambdaArray, jArray, t, V, no, to, MU, Q, CSi, fi)
         return
 
     # Главная функция
     def main(self, inputFileName):
         self.splitInputFile(inputFileName)
-        to, lambdaArray, jArray = self.forIter(self.findMostLoadedNode())
-        self.find_All(to, np.transpose(lambdaArray), jArray)
+        lambdaArray, jArray, t, to, MU, Q, CSi = self.forIter(self.findMostLoadedNode())
+        t = np.transpose(np.array(t))
+        self.find_All(np.transpose(lambdaArray), jArray, t, to, MU, Q, CSi)
         return 0
 
 if __name__ == '__main__':
-    Jackson_Network_MM1(FileName)
+    GSM_CF_GG1(FileName)

@@ -4,19 +4,21 @@ import numpy as np
 from re import sub
 from scipy.linalg import solve
 
-FileName = './src/GSS_CF_GG1_2/InputData.dat'
+FileName = './src/GMM_CF_GGK/InputData.dat'
 
-class ClosedQueuningNetworks():
+class GMM_CF_GGK():
 
     M = 1            # Количество узлов (приборов) в сети
     R = 1            # Количество классов заявок
     ErrorRate = 0.1  # Погрешность выполнения программы
 
-    InputParameterDict = { 'N' : np.empty(1),   # Количество заявок определённого класса (размер - 1 x R)
-                           'Q' : [],            # Матрица передач, определяющая маршрутизацию заявок в сети (размер - R x M x M)
-                           'MU': [],            # Интенсивность обслуживания заявок в узлах сети (размер - R x M)                          
-                           'CS': [],            # Квадраты коэффициентов вариации длительностей обслуживания заявок в узлах сети (размер - R x M)
-                           'W' : [] }           # Вероятность нахождения заявки в текущем узле сети (размер - R x M)
+    InputParameterDict = { 'N' : np.empty(1),  # Количество заявок определённого класса (размер - R)
+                           'Q' : [],           # Матрица передач, определяющая маршрутизацию заявок в сети (размер - R x M x M)
+                           'K' : [],           # Число каналов обслуживания в узлах сети (размер - M)
+                           'MU': [],           # Интенсивность обслуживания заявок в узлах сети (размер - R x M)                          
+                           'CS': [],           # Квадраты коэффициентов вариации длительностей обслуживания заявок в узлах сети (размер - R x M)
+                           'W' : [],           # Вероятность нахождения заявки в текущем узле сети (размер - R x M)
+                           'F' : [] }          # Массив значений факториалов (размер - M)
 
     # 2 Массива для метода Вегстейна
     xArray = []
@@ -27,7 +29,7 @@ class ClosedQueuningNetworks():
     
     # Получение из входного файла значений параметров сети
     def getInputParameter(self, inputFile):
-        flagQ = False
+        flagQ  = False
         flagMU = False
         flagCS = False
         for line in inputFile:
@@ -51,25 +53,23 @@ class ClosedQueuningNetworks():
                         self.R = int(paramArray[0])
                     elif paramName == 'E':
                         self.ErrorRate = float(paramArray[0])
-                    elif paramName == 'N':
+                    elif paramName in ['N', 'K']:
                         self.InputParameterDict[paramName] = np.array(list(map(int, paramArray)))
                     elif flagCS == True:
-                        self.InputParameterDict['CS'] = self.InputParameterDict['CS'] + list(map(float, paramArray))
-                        if len(self.InputParameterDict['CS']) == self.M * self.R:
+                        self.InputParameterDict['CS'].append(list(map(float, paramArray)))
+                        if len(self.InputParameterDict['CS']) == self.R:
                             flagCS = False
                     elif flagMU == True:
-                        self.InputParameterDict['MU'] = self.InputParameterDict['MU'] + list(map(float, paramArray))
-                        if len(self.InputParameterDict['MU']) == self.M * self.R:
+                        self.InputParameterDict['MU'].append(list(map(float, paramArray)))
+                        if len(self.InputParameterDict['MU']) == self.R:
                             flagMU = False
                     elif flagQ == True:
-                        self.InputParameterDict['Q'] = self.InputParameterDict['Q'] + list(map(float, paramArray))
-                        if len(self.InputParameterDict['Q']) == (self.M ** 2) * self.R:
+                        self.InputParameterDict['Q'].append(list(map(float, paramArray)))
+                        if len(self.InputParameterDict['Q']) == self.M * self.R:
                             flagQ = False
                 except TypeError:
                     print(f'\n   Error! TypeError with parameter "{paramName}"...')
                     continue
-        self.InputParameterDict['CS'] = np.array(self.InputParameterDict['CS']).reshape(self.R, self.M)
-        self.InputParameterDict['MU'] = np.array(self.InputParameterDict['MU']).reshape(self.R, self.M)
         self.InputParameterDict['Q'] = np.array(self.InputParameterDict['Q']).reshape(self.R, self.M, self.M)
         return
 
@@ -88,13 +88,9 @@ class ClosedQueuningNetworks():
     def findWArray(self):
         for r in range(self.R):
             flag = False
-            for i in range(self.M):
-                for j in range(self.M):
-                    elem = self.InputParameterDict['Q'][r][i][j]
-                    if elem != 1 and elem != 0:
-                        flag = True
-                        break
-                if flag:
+            for elem in self.InputParameterDict['Q'][r]:
+                if not 1. in elem:
+                    flag = True
                     break    
             if flag:
                 A = np.copy(np.transpose(self.InputParameterDict['Q'][r]))
@@ -116,7 +112,7 @@ class ClosedQueuningNetworks():
             max = 0.
             indexMax = 0
             for i in range(self.M):
-                value = self.InputParameterDict['W'][r][i] / self.InputParameterDict['MU'][r][i]
+                value = self.InputParameterDict['W'][r][i] / (self.InputParameterDict['K'][i] * self.InputParameterDict['MU'][r][i])
                 if value > max:
                     max = value
                     indexMax = i
@@ -150,16 +146,15 @@ class ClosedQueuningNetworks():
         A = []
         for i in range(self.M):
             A.append([Wi[i] * lambdaQ[j][i] / lambdaArrayR[i] * Q[j][i] * (1 - Pi[j] ** 2) for j in range(self.M)])
-        for i in range(self.M):
             A[i][i] -= 1
         return A
 
     # Расчёт матрицы B
-    def solve_B(self, Wi, lambdaQ, lambdaArrayR, Q, Pi, CSai):
+    def solve_B(self, Wi, lambdaQ, lambdaArrayR, Q, Pi, Xi):
         B = []
         for i in range(self.M):
-            B.append(-1 + Wi[i] - Wi[i] * sum([lambdaQ[j][i] * (Q[j][i] * (Pi[j] ** 2) * CSai[j] + 1 - Q[j][i]) / lambdaArrayR[i] \
-                for j in range(self.M)]))
+            B.append(-1 + Wi[i] - Wi[i] * sum([lambdaQ[j][i] / lambdaArrayR[i] * \
+                (Q[j][i] * (Pi[j] ** 2) * Xi[j] + 1 - Q[j][i]) for j in range(self.M)]))
         return B
 
     # Поиск CAi
@@ -176,22 +171,27 @@ class ClosedQueuningNetworks():
         for i in range(self.M):
             Vi.append(1 / sum([Q[j][i] / (lambdaArrayR[j] ** 2) for j in range(self.M)]))
         Wi = [1 / (1 + 4 * ((1 - Pi[i]) ** 2) * (Vi[i] - 1)) for i in range(self.M)]
-        A = self.solve_A(Wi, lambdaQ, lambdaArrayR, Q, Pi)
-        B = self.solve_B(Wi, lambdaQ, lambdaArrayR, Q, Pi, CSai)       
+        Xi = [1 + (max(CSai[i], 0.2) - 1) / np.sqrt(self.InputParameterDict['K'][i]) for i in range(self.M)]
+        A = self.solve_A(Wi, lambdaQ, lambdaArrayR, Q, Xi)
+        B = self.solve_B(Wi, lambdaQ, lambdaArrayR, Q, Pi, Xi)
         CAi = solve(A, B)
         return (Pi, CSai, CAi)
 
+    # Поиск P0
+    def find_P0(self, P, m):
+        P0 = 1 + (P ** (m + 1)) / (self.InputParameterDict['F'][m] * (m - P))
+        for l in range(1, m + 1):
+            P0 += (P ** l) / self.InputParameterDict['F'][l]
+        return 1 / P0
+
     # Поиск to без корректирующего фактора (toWF)
-    def find_toWF(self, Pi, CSai, CAi, MU):
+    def find_toWF(self, Pi, CSi, CAi, MU):
         toWF = []
         for i in range(self.M):
-            pi = Pi[i]
-            CA = CAi[i]
-            elem = pi * (CSai[i] + CA) / (2 * MU[i] * (1 - pi))
-            if CA < 1 - self.ErrorRate:
-                elem *= np.exp(-(1 - pi) * ((1 - CA) ** 2) / (1.5 * pi * (CSai[i] + CA)))
-            elif CA > 1 + self.ErrorRate:
-                elem *= np.exp(-(1 - pi) * (CA - 1) / (4 * CSai[i] + CA))
+            P = Pi[i]
+            m = self.InputParameterDict['K'][i]
+            elem = (CSi[i] + CAi[i]) / 2 * self.find_P0(P, m) * (P ** m) / (m * ((1 - P / m) ** 2) * \
+                self.InputParameterDict['F'][m] * MU[i])
             toWF.append(elem)
         return toWF
 
@@ -221,13 +221,13 @@ class ClosedQueuningNetworks():
         for i in range(self.M):
             ttR.append(sum([1 / self.InputParameterDict['MU'][r][i] * lambdaArrayi[i][r] / lambdaArrayR[i] for r in range(self.R)]))
         MU = [1 / ttR[i] for i in range(self.M)]
-        Pi, CSai, CAi = self.find_CAi(Q, MU, lambdaArrayi, lambdaArrayR)
-        toWF = self.find_toWF(Pi, CSai, CAi, MU)
+        Pi, CSi, CAi = self.find_CAi(Q, MU, lambdaArrayi, lambdaArrayR)
+        toWF = self.find_toWF(Pi, CSi, CAi, MU)
         N = sum(self.InputParameterDict['N'])
-        to = [toWF[i] * ((N - 1) / N) * (N / (N + toWF[i] * MU[i])) for i in range(self.M)]
+        to = [toWF[i] * (N - 1) / (N + toWF[i] * MU[i]) for i in range(self.M)]
         t = self.find_t(to)
         jArray = self.find_J(lambdaArrayi, t)
-        return (lambdaArrayi, jArray, t, to, MU, Q, CSai)
+        return (lambdaArrayi, jArray, t, to, MU, Q, CSi)
 
     # Функция метода Вегстейна
     def funWegstein(self, iter):
@@ -242,15 +242,16 @@ class ClosedQueuningNetworks():
     # Выполнение всех итераций
     def forIter(self, indexMaxArray):
         iter = -1
-        Bi = [self.InputParameterDict['MU'][r][indexMaxArray[r]] / self.InputParameterDict['W'][r][indexMaxArray[r]] * \
-            (1 - 1 / self.InputParameterDict['N'][r]) for r in range(self.R)]
+        self.InputParameterDict['F'] = [np.math.factorial(j) for j in range(max(self.InputParameterDict['K']) + 1)]
+        Bi = [self.InputParameterDict['K'][indexMaxArray[r]] * (1 - 1 / self.InputParameterDict['N'][r]) * \
+            self.InputParameterDict['MU'][r][indexMaxArray[r]] / self.InputParameterDict['W'][r][indexMaxArray[r]] for r in range(self.R)]
         self.xArray.append(Bi)
         self.yArray.append(Bi)
         errorIter = self.ErrorRate * self.R
         L = np.zeros(self.R)
         while sum([abs(L[r] - self.InputParameterDict['N'][r]) for r in range(self.R)]) >= errorIter:
             iter = iter + 1
-            lambdaArrayi, jArray, t, to, MU, Q, CSai = self.doOneIter(Bi)
+            lambdaArrayi, jArray, t, to, MU, Q, CSi = self.doOneIter(Bi)
             jArray = np.transpose(np.array(jArray))
             L = [sum(jArray[r]) for r in range(self.R)]
             Bi = [Bi[r] * self.InputParameterDict['N'][r] / L[r] for r in range(self.R)]
@@ -258,7 +259,7 @@ class ClosedQueuningNetworks():
             if iter > 0:
                 Bi = self.funWegstein(iter)
             self.xArray.append(Bi)
-        return (lambdaArrayi, jArray, t, to, MU, Q, CSai)
+        return (lambdaArrayi, jArray, t, to, MU, Q, CSi)
 
     # Поиск среднего времени одного цикла Viv для v-го класса заявок через i-й узел сети
     def find_V(self, lambdaArray):
@@ -269,7 +270,7 @@ class ClosedQueuningNetworks():
 
     # Поиск пропускной способности сети fi
     def find_fi(self, V):
-        fi = [1 / V[r][1] for r in range(self.R)]
+        fi = [self.M / sum(V[r]) for r in range(self.R)]
         return fi
 
     # Поиск no
@@ -280,11 +281,11 @@ class ClosedQueuningNetworks():
         return no
 
     # Отображение полученного результата
-    def printResult(self, lambdaArray, jArray, t, V, no, to, MU, Q, CSai, fi):
+    def printResult(self, lambdaArray, jArray, t, V, no, to, MU, Q, CSi, fi):
         print('\n   lambda =', lambdaArray)
-        print('\n   MU =', MU)
-        print('\n   Q =', Q)
-        print('\n   CSai =', CSai)
+        print('\n   MUa =', MU)
+        print('\n   Qa =', Q)
+        print('\n   CSa =', CSi)
         print('\n   n =', jArray)
         print('\n   t =', t)
         print('\n   V =', V)
@@ -294,23 +295,23 @@ class ClosedQueuningNetworks():
         return
 
     # Вычисление других характеристик сети
-    def find_All(self, lambdaArray, jArray, t, to, MU, Q, CSai):
+    def find_All(self, lambdaArray, jArray, t, to, MU, Q, CSi):
         if len(lambdaArray) != self.R or len(jArray) != self.R:
             print('\n   Ошибка! Некорректные входные данные!')
             return
         no = self.find_no(jArray, t, to)
         V = self.find_V(lambdaArray)
         fi = self.find_fi(V)
-        self.printResult(lambdaArray, jArray, t, V, no, to, MU, Q, CSai, fi)
+        self.printResult(lambdaArray, jArray, t, V, no, to, MU, Q, CSi, fi)
         return
 
     # Главная функция
     def main(self, inputFileName):
         self.splitInputFile(inputFileName)
-        lambdaArray, jArray, t, to, MU, Q, CSai = self.forIter(self.findMostLoadedNode())
+        lambdaArray, jArray, t, to, MU, Q, CSi = self.forIter(self.findMostLoadedNode())
         t = np.transpose(np.array(t))
-        self.find_All(np.transpose(lambdaArray), jArray, t, to, MU, Q, CSai)
+        self.find_All(np.transpose(lambdaArray), jArray, t, to, MU, Q, CSi)
         return 0
 
 if __name__ == '__main__':
-    ClosedQueuningNetworks(FileName)
+    GMM_CF_GGK(FileName)
