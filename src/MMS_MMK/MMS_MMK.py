@@ -4,9 +4,9 @@ import numpy as np
 from re import sub
 from scipy.linalg import solve
 
-FileName = './src/MSM_MMK/InputData.dat'
+FileName = './src/MMS_MMK/InputData.dat'
 
-class MSM_MMK():
+class MMS_MMK():
 
     M = 1            # Количество узлов (приборов) в сети
     N = 1            # Количество заявок в сети
@@ -178,4 +178,4 @@ class MSM_MMK():
         return 0
 
 if __name__ == '__main__':
-    MSM_MMK(FileName)
+    MMS_MMK(FileName)

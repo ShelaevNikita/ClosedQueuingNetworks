@@ -4,9 +4,9 @@ import numpy as np
 from re import sub
 from scipy.linalg import solve
 
-FileName = './src/MSS_D_MG1/InputData.dat'
+FileName = './src/GSM_D_MG1/InputData.dat'
 
-class MSS_D_MG1():
+class GSM_D_MG1():
 
     M = 1   # Количество узлов (приборов) в сети
     R = 1   # Количество классов заявок
@@ -241,4 +241,4 @@ class MSS_D_MG1():
         return 0
 
 if __name__ == '__main__':
-    MSS_D_MG1(FileName)
+    GSM_D_MG1(FileName)
