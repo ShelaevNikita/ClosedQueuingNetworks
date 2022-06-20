@@ -34,6 +34,14 @@ class GMM_CF_GGK():
         res['R'] = self.R
         return res
 
+    # Проверка корректности заданных значений
+    def correct(self, array):
+        for elemR in array:
+            for elemI in elemR:
+                if elemI == 0:
+                    return False
+        return True
+
     # Получение из входного файла значений параметров сети
     def getInputParameter(self, inputFile):
         flagQ  = False
@@ -59,7 +67,7 @@ class GMM_CF_GGK():
                     elif paramName == 'R':
                         self.R = int(paramArray[0])
                     elif paramName == 'E':
-                        self.ErrorRate = float(paramArray[0])
+                        self.ErrorRate = abs(float(paramArray[0]))
                     elif paramName in ['N', 'K']:
                         self.ParameterDict[paramName] = np.array(list(map(int, paramArray)))
                     elif flagCS == True:
@@ -73,23 +81,35 @@ class GMM_CF_GGK():
                     elif flagQ == True:
                         self.ParameterDict['Q'].append(list(map(float, paramArray)))
                         if len(self.ParameterDict['Q']) == self.M * self.R:
-                            flagQ = False
+                            flagQ = False                  
                 except TypeError:
-                    print(f'\n   Error! TypeError with parameter "{paramName}"...')
-                    continue
-        self.ParameterDict['Q'] = np.array(self.ParameterDict['Q']).reshape(self.R, self.M, self.M)
+                    print(f'\n   ERROR! TypeError with parameter "{paramName}"...\n')
+                    return -1
+        try:
+            if self.M == 0 or self.R == 0 or min(self.ParameterDict['N']) == 0 or min(self.ParameterDict['K']) == 0 or \
+                not self.correct(self.ParameterDict['MU']) or not self.correct(self.ParameterDict['CS']):
+                raise ValueError
+            self.ParameterDict['N']  = np.array(self.ParameterDict['N']).reshape(self.R)
+            self.ParameterDict['K']  = np.array(self.ParameterDict['K']).reshape(self.M)
+            self.ParameterDict['Q']  = np.array(self.ParameterDict['Q']).reshape(self.R, self.M, self.M)
+            self.ParameterDict['MU'] = np.array(self.ParameterDict['MU']).reshape(self.R, self.M)
+            self.ParameterDict['CS'] = np.array(self.ParameterDict['CS']).reshape(self.R, self.M)
+        except ValueError:
+            print('\n   ERROR! Incorrect input data format\n')
+            return -1
         return
 
     # Открытие файла с заданными параметрами сети
     def splitInputFile(self, inputFileName):
+        res = -1
         try:
             inputFile = open(inputFileName, 'r', encoding = 'utf-8')
-            self.getInputParameter(inputFile)
+            res = self.getInputParameter(inputFile)
             inputFile.close()
         except FileNotFoundError:
             print(f'\n   ERROR! Requested file "{inputFileName}" not found!\n')
-            return
-        return
+            return res
+        return res
 
     # Поиск массива W
     def findWArray(self):
@@ -114,6 +134,8 @@ class GMM_CF_GGK():
     # Поиск наиболее загруженного узла в сети
     def findMostLoadedNode(self):
         self.findWArray()
+        self.xArray = []
+        self.yArray = []
         indexMaxArray = []
         for r in range(self.R):
             max = 0.
@@ -306,9 +328,6 @@ class GMM_CF_GGK():
 
     # Вычисление других характеристик сети
     def find_All(self, lambdaArray, jArray, t, to, MU, Q, CSi):
-        if len(lambdaArray) != self.R or len(jArray) != self.R:
-            print('\n   Ошибка! Некорректные входные данные!')
-            return
         no = self.find_no(jArray, t, to)
         V = self.find_V(lambdaArray)
         fi = self.find_fi(V)
@@ -317,7 +336,8 @@ class GMM_CF_GGK():
 
     # Главная функция
     def main(self, inputFileName):
-        self.splitInputFile(inputFileName)
+        if self.splitInputFile(inputFileName) == -1:
+            return 1
         self.findFactorial()
         lambdaArray, jArray, t, to, MU, Q, CSi = self.forIter(self.findMostLoadedNode())
         t = np.transpose(np.array(t))

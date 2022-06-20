@@ -12,10 +12,10 @@ class MSM_CF_MM1():
     R = 1            # Количество классов заявок
     ErrorRate = 0.1  # Погрешность выполнения программы
 
-    InputParameterDict = { 'N' : np.empty(1), # Количество заявок определённого класса (размер - R)
-                           'Q' : [],          # Матрица передач, определяющая маршрутизацию заявок в сети (размер - R x M x M)
-                           'MU': [],          # Интенсивность обслуживания заявок в узлах сети (размер - R x M)                          
-                           'W' : [] }         # Вероятность нахождения заявки в текущем узле сети (размер - R x M)
+    ParameterDict = { 'N' : np.empty(1), # Количество заявок определённого класса (размер - R)
+                      'Q' : [],          # Матрица передач, определяющая маршрутизацию заявок в сети (размер - R x M x M)
+                      'MU': [],          # Интенсивность обслуживания заявок в узлах сети (размер - R x M)                          
+                      'W' : [] }         # Вероятность нахождения заявки в текущем узле сети (размер - R x M)
 
     # 2 Массива для метода Вегстейна
     xArray = []
@@ -23,6 +23,14 @@ class MSM_CF_MM1():
 
     def __init__(self, inputFileName):
         self.main(inputFileName)
+
+    # Проверка корректности заданных значений
+    def correct(self, array):
+        for elemR in array:
+            for elemI in elemR:
+                if elemI == 0:
+                    return False
+        return True
 
     # Получение из входного файла значений параметров сети
     def getInputParameter(self, inputFile):
@@ -48,50 +56,59 @@ class MSM_CF_MM1():
                     elif paramName == 'E':
                         self.ErrorRate = float(paramArray[0])
                     elif paramName == 'N':
-                        self.InputParameterDict['N'] = np.array(list(map(int, paramArray)))
+                        self.ParameterDict['N'] = np.array(list(map(int, paramArray)))
                     elif flagMU == True:
-                        self.InputParameterDict['MU'].append(list(map(float, paramArray)))
-                        if len(self.InputParameterDict['MU']) == self.R:
+                        self.ParameterDict['MU'].append(list(map(float, paramArray)))
+                        if len(self.ParameterDict['MU']) == self.R:
                             flagMU = False
                     elif flagQ == True:
-                        self.InputParameterDict['Q'].append(list(map(float, paramArray)))
-                        if len(self.InputParameterDict['Q']) == self.M * self.R:
+                        self.ParameterDict['Q'].append(list(map(float, paramArray)))
+                        if len(self.ParameterDict['Q']) == self.M * self.R:
                             flagQ = False
                 except TypeError:
-                    print(f'\n   Error! TypeError with parameter "{paramName}"...')
-                    continue
-        self.InputParameterDict['Q'] = np.array(self.InputParameterDict['Q']).reshape(self.R, self.M, self.M)
+                    print(f'\n   ERROR! TypeError with parameter "{paramName}"...\n')
+                    return -1
+        try:
+            if self.M == 0 or self.R == 0 or min(self.ParameterDict['N']) == 0 or not self.correct(self.ParameterDict['MU']):
+                raise ValueError
+            self.ParameterDict['N']  = np.array(self.ParameterDict['N']).reshape(self.R)
+            self.ParameterDict['Q']  = np.array(self.ParameterDict['Q']).reshape(self.R, self.M, self.M)
+            self.ParameterDict['MU'] = np.array(self.ParameterDict['MU']).reshape(self.R, self.M)
+        except ValueError:
+            print('\n   ERROR! Incorrect input data format\n')
+            return -1
         return
 
     # Открытие файла с заданными параметрами сети
     def splitInputFile(self, inputFileName):
+        res = -1
         try:
             inputFile = open(inputFileName, 'r', encoding = 'utf-8')
-            self.getInputParameter(inputFile)
+            res = self.getInputParameter(inputFile)
             inputFile.close()
         except FileNotFoundError:
             print(f'\n   ERROR! Requested file "{inputFileName}" not found!\n')
-            return None
-        return
+            return res
+        return res
 
     # Поиск массива W
     def findWArray(self):
         for r in range(self.R):
             flag = False
-            for elem in self.InputParameterDict['Q'][r]:
+            for elem in self.ParameterDict['Q'][r]:
                 if not 1. in elem:
                     flag = True
                     break    
             if flag:
-                A = np.copy(np.transpose(self.InputParameterDict['Q'][r]))
+                A = np.copy(np.transpose(self.ParameterDict['Q'][r]))
                 B = np.zeros(self.M)
                 for i in range(self.M):
                     A[i][i] = A[i][i] - 1
                 A[-1] = np.ones(self.M)
                 B[-1] = 1
-                self.InputParameterDict['W'].append(solve(A, B))
+                self.ParameterDict['W'].append(solve(A, B))
             else:
-                self.InputParameterDict['W'].append(np.ones(self.M))
+                self.ParameterDict['W'].append(np.ones(self.M))
         return
 
     # Поиск наиболее загруженного узла в сети
@@ -102,7 +119,7 @@ class MSM_CF_MM1():
             max = 0.
             indexMax = 0
             for i in range(self.M):
-                value = self.InputParameterDict['W'][r][i] / self.InputParameterDict['MU'][r][i]
+                value = self.ParameterDict['W'][r][i] / self.ParameterDict['MU'][r][i]
                 if value > max:
                     max = value
                     indexMax = i
@@ -113,19 +130,19 @@ class MSM_CF_MM1():
     def find_J(self, lambdaArray, to):
         jArray = []
         for i in range(self.M):       
-            jArray.append([lambdaArray[i][r] * (to[i] + 1 / self.InputParameterDict['MU'][r][i]) for r in range(self.R)])
+            jArray.append([lambdaArray[i][r] * (to[i] + 1 / self.ParameterDict['MU'][r][i]) for r in range(self.R)])
         return jArray
 
     # Выполнение одной итерации
     def doOneIter(self, Bi):
         lambdaArrayi = []
         for i in range(self.M):
-            lambdaArrayi.append([Bi[r] * self.InputParameterDict['W'][r][i] for r in range(self.R)])
+            lambdaArrayi.append([Bi[r] * self.ParameterDict['W'][r][i] for r in range(self.R)])
         lambdaArrayR = [sum(lambdaArrayi[i]) for i in range(self.M)]
         ttR = []
         for i in range(self.M):
-            ttR.append(sum([1 / self.InputParameterDict['MU'][r][i] * lambdaArrayi[i][r] / lambdaArrayR[i] for r in range(self.R)]))
-        N = sum(self.InputParameterDict['N'])
+            ttR.append(sum([1 / self.ParameterDict['MU'][r][i] * lambdaArrayi[i][r] / lambdaArrayR[i] for r in range(self.R)]))
+        N = sum(self.ParameterDict['N'])
         to = []
         for i in range(self.M):
             lambdaR = lambdaArrayR[i]
@@ -148,18 +165,18 @@ class MSM_CF_MM1():
     # Выполнение всех итераций
     def forIter(self, indexMaxArray):
         iter = -1
-        Bi = [self.InputParameterDict['MU'][r][indexMaxArray[r]] / self.InputParameterDict['W'][r][indexMaxArray[r]] * \
-            (1 - 1 / self.InputParameterDict['N'][r]) for r in range(self.R)]
+        Bi = [self.ParameterDict['MU'][r][indexMaxArray[r]] / self.ParameterDict['W'][r][indexMaxArray[r]] * \
+            (1 - 1 / self.ParameterDict['N'][r]) for r in range(self.R)]
         self.xArray.append(Bi)
         self.yArray.append(Bi)
         errorIter = self.ErrorRate * self.R
         L = np.zeros(self.R)
-        while sum([abs(L[r] - self.InputParameterDict['N'][r]) for r in range(self.R)]) >= errorIter:
+        while sum([abs(L[r] - self.ParameterDict['N'][r]) for r in range(self.R)]) >= errorIter:
             iter = iter + 1
             to, lambdaArray, jArray = self.doOneIter(Bi)
             jArray = np.transpose(np.array(jArray))
             L = [sum(jArray[r]) for r in range(self.R)]
-            Bi = [Bi[r] * self.InputParameterDict['N'][r] / L[r] for r in range(self.R)]
+            Bi = [Bi[r] * self.ParameterDict['N'][r] / L[r] for r in range(self.R)]
             self.yArray.append(Bi)
             if iter > 0:
                 Bi = self.funWegstein(iter)
@@ -170,7 +187,7 @@ class MSM_CF_MM1():
     def find_V(self, lambdaArray):
         V = []
         for r in range(self.R):
-            V.append([self.InputParameterDict['N'][r] / lambdaArray[r][i] for i in range(self.M)])
+            V.append([self.ParameterDict['N'][r] / lambdaArray[r][i] for i in range(self.M)])
         return V
 
     # Поиск пропускной способности сети fi
@@ -205,9 +222,6 @@ class MSM_CF_MM1():
 
     # Вычисление других характеристик сети
     def find_All(self, to, lambdaArray, jArray):
-        if len(lambdaArray) != self.R or len(jArray) != self.R:
-            print('\n   Ошибка! Некорректные входные данные!')
-            return
         t = self.find_t(jArray, lambdaArray)
         no = self.find_no(jArray, t, to)
         V = self.find_V(lambdaArray)
@@ -217,7 +231,8 @@ class MSM_CF_MM1():
 
     # Главная функция
     def main(self, inputFileName):
-        self.splitInputFile(inputFileName)
+        if self.splitInputFile(inputFileName) == -1:
+            return 1
         to, lambdaArray, jArray = self.forIter(self.findMostLoadedNode())
         self.find_All(to, np.transpose(lambdaArray), jArray)
         return 0

@@ -12,13 +12,21 @@ class MSM_D_MM1():
     R = 1            # Количество классов заявок
     ErrorRate = 0.1  # Погрешность выполнения программы
 
-    InputParameterDict = { 'N' : np.empty(1),   # Количество заявок определённого класса (размер - R)
-                           'Q' : [],            # Матрица передач, определяющая маршрутизацию заявок в сети (размер - R x M x M)
-                           'MU': [],            # Интенсивность обслуживания заявок в узлах сети (размер - R x M)                          
-                           'W' : [] }           # Вероятность нахождения заявки в текущем узле сети (размер - R x M)
+    ParameterDict = { 'N' : np.empty(1),   # Количество заявок определённого класса (размер - R)
+                      'Q' : [],            # Матрица передач, определяющая маршрутизацию заявок в сети (размер - R x M x M)
+                      'MU': [],            # Интенсивность обслуживания заявок в узлах сети (размер - R x M)                          
+                      'W' : [] }           # Вероятность нахождения заявки в текущем узле сети (размер - R x M)
 
     def __init__(self, inputFileName):
         self.main(inputFileName)
+
+    # Проверка корректности заданных значений
+    def correct(self, array):
+        for elemR in array:
+            for elemI in elemR:
+                if elemI == 0:
+                    return False
+        return True
 
     # Получение из входного файла значений параметров сети
     def getInputParameter(self, inputFile):
@@ -44,65 +52,74 @@ class MSM_D_MM1():
                     elif paramName == 'E':
                         self.ErrorRate = float(paramArray[0])
                     elif paramName == 'N':
-                        self.InputParameterDict['N'] = np.array(list(map(int, paramArray)))
+                        self.ParameterDict['N'] = np.array(list(map(int, paramArray)))
                     elif flagMU == True:
-                        self.InputParameterDict['MU'].append(list(map(float, paramArray)))
-                        if len(self.InputParameterDict['MU']) == self.R:
+                        self.ParameterDict['MU'].append(list(map(float, paramArray)))
+                        if len(self.ParameterDict['MU']) == self.R:
                             flagMU = False
                     elif flagQ == True:
-                        self.InputParameterDict['Q'].append(list(map(float, paramArray)))
-                        if len(self.InputParameterDict['Q']) == self.M * self.R:
+                        self.ParameterDict['Q'].append(list(map(float, paramArray)))
+                        if len(self.ParameterDict['Q']) == self.M * self.R:
                             flagQ = False
                 except TypeError:
-                    print(f'\n   Error! TypeError with parameter "{paramName}"...')
-                    continue
-        self.InputParameterDict['Q'] = np.array(self.InputParameterDict['Q']).reshape(self.R, self.M, self.M)
+                    print(f'\n   ERROR! TypeError with parameter "{paramName}"...\n')
+                    return -1
+        try:
+            if self.M == 0 or self.R == 0 or min(self.ParameterDict['N']) == 0 or not self.correct(self.ParameterDict['MU']):
+                raise ValueError
+            self.ParameterDict['N']  = np.array(self.ParameterDict['N']).reshape(self.R)
+            self.ParameterDict['Q']  = np.array(self.ParameterDict['Q']).reshape(self.R, self.M, self.M)
+            self.ParameterDict['MU'] = np.array(self.ParameterDict['MU']).reshape(self.R, self.M)
+        except ValueError:
+            print('\n   ERROR! Incorrect input data format\n')
+            return -1
         return
 
     # Открытие файла с заданными параметрами сети
     def splitInputFile(self, inputFileName):
+        res = -1
         try:
             inputFile = open(inputFileName, 'r', encoding = 'utf-8')
-            self.getInputParameter(inputFile)
+            res = self.getInputParameter(inputFile)
             inputFile.close()
         except FileNotFoundError:
             print(f'\n   ERROR! Requested file "{inputFileName}" not found!\n')
-            return None
-        return
+            return res
+        return res
 
     # Поиск массива W
     def findWArray(self):
         for r in range(self.R):
             flag = False
-            for elem in self.InputParameterDict['Q'][r]:
+            for elem in self.ParameterDict['Q'][r]:
                 if not 1. in elem:
                     flag = True
                     break    
             if flag:
-                A = np.copy(np.transpose(self.InputParameterDict['Q'][r]))
+                A = np.copy(np.transpose(self.ParameterDict['Q'][r]))
                 B = np.zeros(self.M)
                 for i in range(self.M):
                     A[i][i] = A[i][i] - 1
                 A[-1] = np.ones(self.M)
                 B[-1] = 1
-                self.InputParameterDict['W'].append(solve(A, B))
+                self.ParameterDict['W'].append(solve(A, B))
             else:
-                self.InputParameterDict['W'].append(np.ones(self.M))
+                self.ParameterDict['W'].append(np.ones(self.M))
         return
 
     # Поиск начального значения t
     def findFirst_t(self, k):       
         t = []
         for r in range(self.R):
-            t.append([k / self.InputParameterDict['MU'][r][i] for i in range(self.M)])
+            t.append([k / self.ParameterDict['MU'][r][i] for i in range(self.M)])
         return t
 
     # Поиск Q = {qiv}
     def find_Q(self, t):
         Q = []
         for r in range(self.R):
-            sumW = sum([self.InputParameterDict['W'][r][i] * t[r][i] for i in range(self.M)])
-            Q.append([self.InputParameterDict['W'][r][i] * t[r][i] / sumW for i in range(self.M)])
+            sumW = sum([self.ParameterDict['W'][r][i] * t[r][i] for i in range(self.M)])
+            Q.append([self.ParameterDict['W'][r][i] * t[r][i] / sumW for i in range(self.M)])
         return Q
 
     # Поиск to
@@ -113,11 +130,11 @@ class MSM_D_MM1():
             for i in range(self.M):
                 t_ir = 0
                 for v in range(self.R):
-                    nv = self.InputParameterDict['N'][v]
+                    nv = self.ParameterDict['N'][v]
                     if v == r:
                         nv -= 1
-                    t_ir += nv * Q[v][i] / self.InputParameterDict['MU'][v][i]
-                t_ir += 1 / self.InputParameterDict['MU'][r][i]
+                    t_ir += nv * Q[v][i] / self.ParameterDict['MU'][v][i]
+                t_ir += 1 / self.ParameterDict['MU'][r][i]
                 new_tr.append(t_ir)
             new_t.append(new_tr)
         return new_t
@@ -139,14 +156,14 @@ class MSM_D_MM1():
     def find_Lambda(self, t, Q):
         lambdaArray = []
         for r in range(self.R):
-            lambdaArray.append([self.InputParameterDict['N'][r] * Q[r][i] / t[r][i] for i in range(self.M)])
+            lambdaArray.append([self.ParameterDict['N'][r] * Q[r][i] / t[r][i] for i in range(self.M)])
         return lambdaArray
 
     # Все итерации поиска t
     def doIter(self):
         self.findWArray()
         t_last =  self.findFirst_t(1)
-        t = self.findFirst_t(sum(self.InputParameterDict['N']))
+        t = self.findFirst_t(sum(self.ParameterDict['N']))
         while self.findComparison_t(t_last, t):
              Q = self.find_Q(t)
              lambdaArray = self.find_Lambda(t, Q)
@@ -158,7 +175,7 @@ class MSM_D_MM1():
     def find_V(self, lambdaArray):
         V = []
         for r in range(self.R):
-            V.append([self.InputParameterDict['N'][r] / lambdaArray[r][i] for i in range(self.M)])
+            V.append([self.ParameterDict['N'][r] / lambdaArray[r][i] for i in range(self.M)])
         return V
 
     # Поиск jArray
@@ -172,7 +189,7 @@ class MSM_D_MM1():
     def find_tor(self, t):
         tor = []
         for r in range(self.R):
-            tor.append([t[r][i] - 1 / self.InputParameterDict['MU'][r][i] for i in range(self.M)])
+            tor.append([t[r][i] - 1 / self.ParameterDict['MU'][r][i] for i in range(self.M)])
         return tor
 
     # Поиск no
@@ -227,7 +244,8 @@ class MSM_D_MM1():
 
     # Главная функция
     def main(self, inputFileName):
-        self.splitInputFile(inputFileName)        
+        if self.splitInputFile(inputFileName) == -1:
+            return 1        
         lambdaArray, t = self.doIter()
         self.find_All(lambdaArray, t)
         return 0

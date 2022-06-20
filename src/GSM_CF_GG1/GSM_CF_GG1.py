@@ -12,11 +12,11 @@ class GSM_CF_GG1():
     R = 1            # Количество классов заявок
     ErrorRate = 0.1  # Погрешность выполнения программы
 
-    InputParameterDict = { 'N' : np.empty(1), # Количество заявок определённого класса (размер - R)
-                           'Q' : [],          # Матрица передач, определяющая маршрутизацию заявок в сети (размер - R x M x M)
-                           'MU': [],          # Интенсивность обслуживания заявок в узлах сети (размер - R x M)                          
-                           'CS': [],          # Квадраты коэффициентов вариации длительностей обслуживания заявок в узлах сети (размер - R x M)
-                           'W' : [] }         # Вероятность нахождения заявки в текущем узле сети (размер - R x M)
+    ParameterDict = { 'N' : np.empty(1), # Количество заявок определённого класса (размер - R)
+                      'Q' : [],          # Матрица передач, определяющая маршрутизацию заявок в сети (размер - R x M x M)
+                      'MU': [],          # Интенсивность обслуживания заявок в узлах сети (размер - R x M)                          
+                      'CS': [],          # Квадраты коэффициентов вариации длительностей обслуживания заявок в узлах сети (размер - R x M)
+                      'W' : [] }         # Вероятность нахождения заявки в текущем узле сети (размер - R x M)
 
     # 2 Массива для метода Вегстейна
     xArray = []
@@ -25,6 +25,14 @@ class GSM_CF_GG1():
     def __init__(self, inputFileName):
         self.main(inputFileName)
     
+    # Проверка корректности заданных значений
+    def correct(self, array):
+        for elemR in array:
+            for elemI in elemR:
+                if elemI == 0:
+                    return False
+        return True
+
     # Получение из входного файла значений параметров сети
     def getInputParameter(self, inputFile):
         flagQ  = False
@@ -52,54 +60,65 @@ class GSM_CF_GG1():
                     elif paramName == 'E':
                         self.ErrorRate = float(paramArray[0])
                     elif paramName == 'N':
-                        self.InputParameterDict['N'] = np.array(list(map(int, paramArray)))
+                        self.ParameterDict['N'] = np.array(list(map(int, paramArray)))
                     elif flagCS == True:
-                        self.InputParameterDict['CS'].append(list(map(float, paramArray)))
-                        if len(self.InputParameterDict['CS']) == self.R:
+                        self.ParameterDict['CS'].append(list(map(float, paramArray)))
+                        if len(self.ParameterDict['CS']) == self.R:
                             flagCS = False
                     elif flagMU == True:
-                        self.InputParameterDict['MU'].append(list(map(float, paramArray)))
-                        if len(self.InputParameterDict['MU']) == self.R:
+                        self.ParameterDict['MU'].append(list(map(float, paramArray)))
+                        if len(self.ParameterDict['MU']) == self.R:
                             flagMU = False
                     elif flagQ == True:
-                        self.InputParameterDict['Q'].append(list(map(float, paramArray)))
-                        if len(self.InputParameterDict['Q']) == self.M * self.R:
+                        self.ParameterDict['Q'].append(list(map(float, paramArray)))
+                        if len(self.ParameterDict['Q']) == self.M * self.R:
                             flagQ = False
                 except TypeError:
-                    print(f'\n   Error! TypeError with parameter "{paramName}"...')
-                    continue
-        self.InputParameterDict['Q'] = np.array(self.InputParameterDict['Q']).reshape(self.R, self.M, self.M)
+                    print(f'\n   ERROR! TypeError with parameter "{paramName}"...\n')
+                    return -1
+        try:
+            if self.M == 0 or self.R == 0 or min(self.ParameterDict['N']) == 0 or \
+                not self.correct(self.ParameterDict['MU']) or not self.correct(self.ParameterDict['CS']):
+                raise ValueError
+            self.ParameterDict['N']  = np.array(self.ParameterDict['N']).reshape(self.R)
+            self.ParameterDict['Q']  = np.array(self.ParameterDict['Q']).reshape(self.R, self.M, self.M)
+            self.ParameterDict['MU'] = np.array(self.ParameterDict['MU']).reshape(self.R, self.M)
+            self.ParameterDict['CS'] = np.array(self.ParameterDict['CS']).reshape(self.R, self.M)
+        except ValueError:
+            print('\n   ERROR! Incorrect input data format\n')
+            return -1
         return
 
     # Открытие файла с заданными параметрами сети
     def splitInputFile(self, inputFileName):
+        res = -1
         try:
             inputFile = open(inputFileName, 'r', encoding = 'utf-8')
-            self.getInputParameter(inputFile)
+            res = self.getInputParameter(inputFile)
             inputFile.close()
         except FileNotFoundError:
             print(f'\n   ERROR! Requested file "{inputFileName}" not found!\n')
-            return None
-        return
+            return res
+        return res
 
     # Поиск массива W
     def findWArray(self):
         for r in range(self.R):
             flag = False
-            for elem in self.InputParameterDict['Q'][r]:
+            for elem in self.ParameterDict['Q'][r]:
                 if not 1. in elem:
                     flag = True
                     break    
             if flag:
-                A = np.copy(np.transpose(self.InputParameterDict['Q'][r]))
+                A = np.copy(np.transpose(self.ParameterDict['Q'][r]))
                 B = np.zeros(self.M)
                 for i in range(self.M):
                     A[i][i] = A[i][i] - 1
                 A[-1] = np.ones(self.M)
                 B[-1] = 1
-                self.InputParameterDict['W'].append(solve(A, B))
+                self.ParameterDict['W'].append(solve(A, B))
             else:
-                self.InputParameterDict['W'].append(np.ones(self.M))
+                self.ParameterDict['W'].append(np.ones(self.M))
         return
 
     # Поиск наиболее загруженного узла в сети
@@ -110,7 +129,7 @@ class GSM_CF_GG1():
             max = 0.
             indexMax = 0
             for i in range(self.M):
-                value = self.InputParameterDict['W'][r][i] / self.InputParameterDict['MU'][r][i]
+                value = self.ParameterDict['W'][r][i] / self.ParameterDict['MU'][r][i]
                 if value > max:
                     max = value
                     indexMax = i
@@ -123,7 +142,7 @@ class GSM_CF_GG1():
         for r in range(self.R):
             newArrij = []
             for i in range(self.M):
-                newArrij.append([lambdaArrayi[i][r] * self.InputParameterDict['Q'][r][i][j] for j in range(self.M)])
+                newArrij.append([lambdaArrayi[i][r] * self.ParameterDict['Q'][r][i][j] for j in range(self.M)])
             lambdaArrij.append(newArrij)
         return lambdaArrij
 
@@ -162,8 +181,8 @@ class GSM_CF_GG1():
             lambdaQ.append([lambdaArrayR[i] * Q[i][j] for j in range(self.M)])
         CS = []
         for i in range(self.M):
-            CS.append(sum([lambdaArrayi[i][r] / lambdaArrayR[i] * (self.InputParameterDict['CS'][r][i] + 1) * \
-                ((MU[i] / self.InputParameterDict['MU'][r][i]) ** 2) for r in range(self.R)]) - 1)
+            CS.append(sum([lambdaArrayi[i][r] / lambdaArrayR[i] * (self.ParameterDict['CS'][r][i] + 1) * \
+                ((MU[i] / self.ParameterDict['MU'][r][i]) ** 2) for r in range(self.R)]) - 1)
         Pi = [lambdaArrayR[i] / MU[i] for i in range(self.M)]
         Vi = []
         for i in range(self.M):
@@ -192,7 +211,7 @@ class GSM_CF_GG1():
     def find_t(self, to):
         t = []
         for i in range(self.M):
-            t.append([to[i] + 1 / self.InputParameterDict['MU'][r][i] for r in range(self.R)])
+            t.append([to[i] + 1 / self.ParameterDict['MU'][r][i] for r in range(self.R)])
         return t
 
     # Поиск jArray
@@ -206,17 +225,17 @@ class GSM_CF_GG1():
     def doOneIter(self, Bi):
         lambdaArrayi = []
         for i in range(self.M):
-            lambdaArrayi.append([Bi[r] * self.InputParameterDict['W'][r][i] for r in range(self.R)])
+            lambdaArrayi.append([Bi[r] * self.ParameterDict['W'][r][i] for r in range(self.R)])
         lambdaArrayR = [sum(lambdaArrayi[i]) for i in range(self.M)]
         lambdaArrij = self.find_lambdaArrij(lambdaArrayi)
         Q = self.find_Q(lambdaArrij, lambdaArrayR)
         ttR = []
         for i in range(self.M):
-            ttR.append(sum([1 / self.InputParameterDict['MU'][r][i] * lambdaArrayi[i][r] / lambdaArrayR[i] for r in range(self.R)]))
+            ttR.append(sum([1 / self.ParameterDict['MU'][r][i] * lambdaArrayi[i][r] / lambdaArrayR[i] for r in range(self.R)]))
         MU = [1 / ttR[i] for i in range(self.M)]
         Pi, CSi, CAi = self.find_CAi(Q, MU, lambdaArrayi, lambdaArrayR)
         toWF = self.find_toWF(Pi, CSi, CAi, MU)
-        N = sum(self.InputParameterDict['N'])
+        N = sum(self.ParameterDict['N'])
         to = [toWF[i] * (N - 1) / (N + toWF[i] * MU[i]) for i in range(self.M)]
         t = self.find_t(to)
         jArray = self.find_J(lambdaArrayi, t)
@@ -235,18 +254,18 @@ class GSM_CF_GG1():
     # Выполнение всех итераций
     def forIter(self, indexMaxArray):
         iter = -1
-        Bi = [self.InputParameterDict['MU'][r][indexMaxArray[r]] / self.InputParameterDict['W'][r][indexMaxArray[r]] * \
-            (1 - 1 / self.InputParameterDict['N'][r]) for r in range(self.R)]
+        Bi = [self.ParameterDict['MU'][r][indexMaxArray[r]] / self.ParameterDict['W'][r][indexMaxArray[r]] * \
+            (1 - 1 / self.ParameterDict['N'][r]) for r in range(self.R)]
         self.xArray.append(Bi)
         self.yArray.append(Bi)
         errorIter = self.ErrorRate * self.R
         L = np.zeros(self.R)
-        while sum([abs(L[r] - self.InputParameterDict['N'][r]) for r in range(self.R)]) >= errorIter:
+        while sum([abs(L[r] - self.ParameterDict['N'][r]) for r in range(self.R)]) >= errorIter:
             iter = iter + 1
             lambdaArrayi, jArray, t, to, MU, Q, CSi = self.doOneIter(Bi)
             jArray = np.transpose(np.array(jArray))
             L = [sum(jArray[r]) for r in range(self.R)]
-            Bi = [Bi[r] * self.InputParameterDict['N'][r] / L[r] for r in range(self.R)]
+            Bi = [Bi[r] * self.ParameterDict['N'][r] / L[r] for r in range(self.R)]
             self.yArray.append(Bi)
             if iter > 0:
                 Bi = self.funWegstein(iter)
@@ -257,7 +276,7 @@ class GSM_CF_GG1():
     def find_V(self, lambdaArray):
         V = []
         for r in range(self.R):
-            V.append([self.InputParameterDict['N'][r] / lambdaArray[r][i] for i in range(self.M)])
+            V.append([self.ParameterDict['N'][r] / lambdaArray[r][i] for i in range(self.M)])
         return V
 
     # Поиск пропускной способности сети fi
@@ -288,9 +307,6 @@ class GSM_CF_GG1():
 
     # Вычисление других характеристик сети
     def find_All(self, lambdaArray, jArray, t, to, MU, Q, CSi):
-        if len(lambdaArray) != self.R or len(jArray) != self.R:
-            print('\n   Ошибка! Некорректные входные данные!')
-            return
         no = self.find_no(jArray, t, to)
         V = self.find_V(lambdaArray)
         fi = self.find_fi(V)
@@ -299,7 +315,8 @@ class GSM_CF_GG1():
 
     # Главная функция
     def main(self, inputFileName):
-        self.splitInputFile(inputFileName)
+        if self.splitInputFile(inputFileName) == -1:
+            return 1
         lambdaArray, jArray, t, to, MU, Q, CSi = self.forIter(self.findMostLoadedNode())
         t = np.transpose(np.array(t))
         self.find_All(np.transpose(lambdaArray), jArray, t, to, MU, Q, CSi)

@@ -12,9 +12,9 @@ class MSS_CF_MM1():
     N = 1            # Количество заявок в сети
     ErrorRate = 0.1  # Погрешность выполнения программы
 
-    InputParameterDict = { 'Q' : [],              # Матрица передач, определяющая маршрутизацию заявок в сети (размер - M x M)
-                           'MU': np.empty(1),     # Интенсивность обслуживания заявок в узлах сети (размер - M)                          
-                           'W' : np.empty(1) }    # Вероятность нахождения заявки в текущем узле сети (размер - M)
+    ParameterDict = { 'Q' : [],              # Матрица передач, определяющая маршрутизацию заявок в сети (размер - M x M)
+                      'MU': np.empty(1),     # Интенсивность обслуживания заявок в узлах сети (размер - M)                          
+                      'W' : np.empty(1) }    # Вероятность нахождения заявки в текущем узле сети (размер - M)
 
     # 2 Массива для метода Вегстейна
     xArray = []
@@ -44,44 +44,53 @@ class MSS_CF_MM1():
                     elif paramName == 'E':
                         self.ErrorRate = float(paramArray[0])
                     elif paramName == 'MU':
-                        self.InputParameterDict['MU'] = np.array(list(map(float, paramArray)))
+                        self.ParameterDict['MU'] = np.array(list(map(float, paramArray)))
                     elif flagQ == True:
-                        self.InputParameterDict['Q'].append(list(map(float, paramArray)))
-                        if len(self.InputParameterDict['Q']) == self.M:
+                        self.ParameterDict['Q'].append(list(map(float, paramArray)))
+                        if len(self.ParameterDict['Q']) == self.M:
                             flagQ = False
                 except TypeError:
-                    print(f'\n   Error! TypeError with parameter "{paramName}"...')
-                    continue
+                    print(f'\n   ERROR! TypeError with parameter "{paramName}"...\n')
+                    return -1
+        try:
+            if self.M == 0 or self.N == 0 or min(self.ParameterDict['MU']) == 0:
+                raise ValueError
+            self.ParameterDict['Q']  = np.array(self.ParameterDict['Q']).reshape(self.M, self.M)
+            self.ParameterDict['MU'] = np.array(self.ParameterDict['MU']).reshape(self.M)
+        except ValueError:
+            print('\n   ERROR! Incorrect input data format\n')
+            return -1
         return
 
     # Открытие файла с заданными параметрами сети
     def splitInputFile(self, inputFileName):
+        res = -1
         try:
             inputFile = open(inputFileName, 'r', encoding = 'utf-8')
-            self.getInputParameter(inputFile)
+            res = self.getInputParameter(inputFile)
             inputFile.close()
         except FileNotFoundError:
             print(f'\n   ERROR! Requested file "{inputFileName}" not found!\n')
-            return None
-        return
+            return res
+        return res
 
     # Поиск массива W
     def findWArray(self):
         flag = False
-        for elem in self.InputParameterDict['Q']:
+        for elem in self.ParameterDict['Q']:
             if not 1. in elem:
                 flag = True
                 break     
         if flag:
-            A = np.copy(np.transpose(self.InputParameterDict['Q']))
+            A = np.copy(np.transpose(self.ParameterDict['Q']))
             B = np.zeros(self.M)
             for i in range(self.M):
                 A[i][i] = A[i][i] - 1
             A[-1] = np.ones(self.M)
             B[-1] = 1
-            self.InputParameterDict['W'] = solve(A, B)
+            self.ParameterDict['W'] = solve(A, B)
         else:
-            self.InputParameterDict['W'] = np.ones(self.M)
+            self.ParameterDict['W'] = np.ones(self.M)
         return
 
     # Поиск наиболее загруженного узла в сети
@@ -90,7 +99,7 @@ class MSS_CF_MM1():
         max = 0.
         indexMax = 0
         for i in range(self.M):
-            value = self.InputParameterDict['W'][i] / self.InputParameterDict['MU'][i]
+            value = self.ParameterDict['W'][i] / self.ParameterDict['MU'][i]
             if value > max:
                 max = value
                 indexMax = i
@@ -98,11 +107,11 @@ class MSS_CF_MM1():
 
     # Выполнение одной итерации
     def doOneIter(self, Bi):
-        lambdaArray = [Bi * elem for elem in self.InputParameterDict['W']]
+        lambdaArray = [Bi * elem for elem in self.ParameterDict['W']]
         jArray = []
         for i in range(self.M):
             lambdai = lambdaArray[i]
-            mui = self.InputParameterDict['MU'][i]
+            mui = self.ParameterDict['MU'][i]
             kk = lambdai / (mui - lambdai)
             hh = self.N / (self.N + kk) * kk / mui * (self.N - 1) / self.N
             jArray.append(lambdai * (hh + 1 / mui))
@@ -118,7 +127,7 @@ class MSS_CF_MM1():
     # Выполнение всех итераций
     def forIter(self, indexMax):
         iter = -1
-        Bi = self.InputParameterDict['MU'][indexMax] / self.InputParameterDict['W'][indexMax] * (1 - 1 / self.N)
+        Bi = self.ParameterDict['MU'][indexMax] / self.ParameterDict['W'][indexMax] * (1 - 1 / self.N)
         self.xArray.append(Bi)
         self.yArray.append(Bi)
         L = 0.
@@ -146,11 +155,8 @@ class MSS_CF_MM1():
 
     # Вычисление других характеристик сети
     def find_All(self, lambdaArray, jArray):
-        if len(lambdaArray) != self.M or len(jArray) != self.M:
-            print('\n   Ошибка! Некорректные входные данные!')
-            return
         t = [jArray[i] / lambdaArray[i] for i in range(self.M)]
-        to = [t[i] - 1 / self.InputParameterDict['MU'][i] for i in range(self.M)]
+        to = [t[i] - 1 / self.ParameterDict['MU'][i] for i in range(self.M)]
         no = [jArray[i] * to[i] / t[i] for i in range(self.M)]
         V = [self.N / lambdaArray[i] for i in range(self.M)]
         fi = self.M / sum(V)
@@ -159,7 +165,8 @@ class MSS_CF_MM1():
 
     # Главная функция
     def main(self, inputFileName):
-        self.splitInputFile(inputFileName)
+        if self.splitInputFile(inputFileName) == -1:
+            return 1
         lambdaArray, jArray = self.forIter(self.findMostLoadedNode())
         self.find_All(lambdaArray, jArray)
         return 0
